@@ -286,11 +286,15 @@ def cmd_update(args) -> int:
         or "insikt"  # the published package, once on PyPI
     )
     print(f"updating insikt from: {source}")
+    # Force the package to rebuild: a git/local source often keeps the same
+    # version string, which makes a plain `pip install --upgrade` a no-op.
     if shutil.which("uv"):
-        cmd = ["uv", "pip", "install", "--python", venv_python, "--upgrade", source]
+        rc = subprocess.call(
+            ["uv", "pip", "install", "--python", venv_python, "--reinstall-package", "insikt", source]
+        )
     else:
-        cmd = [venv_python, "-m", "pip", "install", "--upgrade", source]
-    rc = subprocess.call(cmd)
+        subprocess.call([venv_python, "-m", "pip", "install", "--upgrade", source])  # any new deps
+        rc = subprocess.call([venv_python, "-m", "pip", "install", "--force-reinstall", "--no-deps", source])
     if rc != 0:
         print(
             "update failed — re-run the installer instead:\n"

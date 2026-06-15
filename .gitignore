@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+
+# Insikt local state / generated artifacts
+*.db
+overview.html
+tests/fixtures/hermes_home/memory/memory.db

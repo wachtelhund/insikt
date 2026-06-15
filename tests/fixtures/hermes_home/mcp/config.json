@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "filesystem": {
+      "command": "mcp-fs",
+      "args": ["~/projects"]
+    },
+    "insikt": {
+      "command": "insikt",
+      "args": ["mcp"]
+    }
+  }
+}

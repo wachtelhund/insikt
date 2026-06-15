@@ -1,0 +1,21 @@
+# Sample Hermes home for fixtures/demo. Matches HermesCollector supported range.
+version: "0.9.2"
+host: pi-hermes
+gateway:
+  bind: "0.0.0.0:8765"   # exposed on all interfaces ...
+  auth: none             # ... with no auth -> exposure finding
+models:
+  - provider: anthropic
+    name: claude-opus-4-8
+    endpoint: https://api.anthropic.com
+  - provider: openai
+    name: gpt-4o
+    endpoint: https://api.openai.com
+connectors:
+  - platform: telegram
+    accepts_strangers: true   # reachable by strangers -> finding
+  - platform: whatsapp
+    accepts_strangers: false
+profiles:
+  - default
+  - research

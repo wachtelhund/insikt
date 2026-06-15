@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "insikt"
+version = "0.0.1"
+description = "Local-first, read-only auditor that makes a self-hosted AI agent's capabilities, actions, model usage, and risk surface legible — and exposes it back to the agent as a read-only MCP toolset."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Sourceful" }]
+keywords = ["mcp", "ai-agents", "audit", "observability", "security", "hermes", "openclaw"]
+dependencies = [
+    "pyyaml>=6",
+    "mcp>=1.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+insikt = "insikt.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["insikt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

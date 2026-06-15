@@ -1,0 +1,7 @@
+{
+  "version": "2026-06-15.sample",
+  "note": "SAMPLE advisory feed bundled with Insikt v0. NOT signed. In production this must be a signed/pinned feed (README \u00a76, \u00a78.2). Hashes below are known-bad skill fingerprints from (simulated) community supply-chain advisories.",
+  "known_bad_hashes": [
+    "ab8c4b3a0208007b2c8f97d61d76c6c2a26e5861db257e2cdb012704b591e329"
+  ]
+}

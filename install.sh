@@ -17,6 +17,10 @@
 # before running anything.
 set -eu
 
+# Fail fast instead of hanging on a credential prompt if the repo is private.
+export GIT_TERMINAL_PROMPT=0
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+
 INSIKT_HOME="${INSIKT_HOME:-$HOME/.insikt}"
 BIN_DIR="${INSIKT_BIN_DIR:-$HOME/.local/bin}"
 VENV="$INSIKT_HOME/venv"
@@ -67,18 +71,22 @@ done
 mkdir -p "$INSIKT_HOME" "$BIN_DIR"
 PRIOR="$("$VENV/bin/insikt" --version 2>/dev/null || true)"
 rm -rf "$VENV"
+NOTE="installing insikt + dependencies — the first run fetches the MCP SDK and can take a minute or two on a Raspberry Pi (progress below)…"
+FAIL="install failed (see the error above). If the repo is private, make it public or re-run with INSIKT_SOURCE=<path-to-a-local-clone>."
 if command -v uv >/dev/null 2>&1; then
-  say "using uv"
+  say "using uv to build the environment"
   if [ -n "$GOODPY" ]; then uv venv --python "$GOODPY" "$VENV" >/dev/null
   else uv venv --python 3.13 "$VENV" >/dev/null; fi   # uv fetches 3.13 if no system Python works
-  uv pip install --python "$VENV/bin/python" --quiet "$INSIKT_SOURCE"
+  say "$NOTE"
+  uv pip install --python "$VENV/bin/python" "$INSIKT_SOURCE" || die "$FAIL"
 else
   [ -n "$GOODPY" ] || die "No working Python >=3.10 found and 'uv' is not installed.
 Install uv (https://docs.astral.sh/uv/) or a working Python 3.11/3.12/3.13, then re-run."
-  say "using $($GOODPY --version 2>&1)"
+  say "using $($GOODPY --version 2>&1) to build the environment"
   "$GOODPY" -m venv "$VENV"
-  "$VENV/bin/python" -m pip install --quiet --upgrade pip
-  "$VENV/bin/python" -m pip install --quiet "$INSIKT_SOURCE"
+  "$VENV/bin/python" -m pip install --upgrade pip >/dev/null 2>&1 || true
+  say "$NOTE"
+  "$VENV/bin/python" -m pip install "$INSIKT_SOURCE" || die "$FAIL"
 fi
 ln -sf "$VENV/bin/insikt" "$BIN_DIR/insikt"
 printf '%s\n' "$INSIKT_SOURCE" > "$INSIKT_HOME/source"   # remembered by `insikt update`

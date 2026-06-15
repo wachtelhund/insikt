@@ -16,6 +16,19 @@ _EXFIL_TRIAD = {"shell", "network", "credential_read"}
 _RISKY_DECLARED_TOOLS = {"shell", "web", "network", "messaging"}
 
 
+def _is_wildcard_bind(bind: str) -> bool:
+    """True if a gateway bind exposes all interfaces (IPv4 ``0.0.0.0`` or IPv6
+    ``::`` / ``[::]``), tolerating ``host:port`` and ``[host]:port`` forms."""
+    host = (bind or "").strip()
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    if host.startswith("["):            # [::]:8765 / [::1]:8765
+        host = host[1:].split("]", 1)[0]
+    elif host.count(":") == 1:          # 0.0.0.0:8765 (IPv4 host:port)
+        host = host.rsplit(":", 1)[0]
+    return host in ("0.0.0.0", "::", "")
+
+
 def load_advisory_feed(path: Optional[str | Path]) -> dict:
     """Load a (future: signed) advisory feed of known-bad skill hashes.
 
@@ -161,7 +174,7 @@ class HygieneEngine:
             props = agent.props
             bind = str(props.get("gateway_bind") or "")
             auth = str(props.get("auth_mode") or "unknown").lower()
-            exposed_bind = bind.startswith("0.0.0.0") or "::" == bind.split(":")[0]
+            exposed_bind = _is_wildcard_bind(bind)
             no_auth = auth in ("none", "", "unknown", "off", "false")
 
             stranger_connectors = [

@@ -11,7 +11,24 @@ from __future__ import annotations
 from typing import Optional
 
 from .model import Graph, NodeType, Rel
+from .redact import redact_secrets
 from .timewindow import in_window, parse_window
+
+_UNBOUNDED = ("all", "", "*")
+
+
+def _to_float(v) -> Optional[float]:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(v) -> Optional[int]:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def resolve_agents(graph: Graph, agent: Optional[str]) -> list[str]:
@@ -21,13 +38,12 @@ def resolve_agents(graph: Graph, agent: Optional[str]) -> list[str]:
     if not agent:
         return [a.id for a in agents]
     needle = agent.lower()
-    matched = [
+    return [
         a.id
         for a in agents
-        if needle in (a.id.lower(), a.label.lower(), str(a.props.get("profile", "")).lower(), str(a.props.get("framework", "")).lower())
+        if needle in (a.id.lower(), str(a.props.get("profile", "")).lower(), str(a.props.get("framework", "")).lower())
         or needle in a.label.lower()
     ]
-    return matched
 
 
 def _skill_detail(graph: Graph, skill) -> dict:
@@ -57,6 +73,17 @@ def capability_surface(graph: Graph, agent: Optional[str] = None) -> dict:
     """Per-agent inventory of skills/tools/connectors/models and what each can
     reach (README §4.1 ``insikt_capability_surface`` / §5 view 2)."""
     agent_ids = set(resolve_agents(graph, agent))
+    # MCP config is per-home (framework-level), so the connected servers apply to
+    # every profile/agent of that home. Surface them so they aren't orphaned from
+    # the capability view (they otherwise only appear via touched-by actions).
+    mcp_servers = sorted(
+        (
+            {"name": r.props.get("value", r.label), "command": r.props.get("command")}
+            for r in graph.by_type(NodeType.RESOURCE)
+            if r.props.get("kind") == "mcp_server"
+        ),
+        key=lambda s: s["name"],
+    )
     agents_out = []
     for a in graph.by_type(NodeType.AGENT):
         if a.id not in agent_ids:
@@ -90,6 +117,7 @@ def capability_surface(graph: Graph, agent: Optional[str] = None) -> dict:
                 "skills": skills,
                 "connectors": connectors,
                 "models": models,
+                "mcp_servers": mcp_servers,
             }
         )
     agents_out.sort(key=lambda a: a["label"])
@@ -102,6 +130,7 @@ def capability_surface(graph: Graph, agent: Optional[str] = None) -> dict:
             "connectors": len(graph.by_type(NodeType.CONNECTOR)),
             "models": len(graph.by_type(NodeType.MODEL)),
             "credential_refs": len(graph.by_type(NodeType.CREDENTIAL_REF)),
+            "mcp_servers": len(mcp_servers),
         },
     }
 
@@ -134,8 +163,8 @@ def _action_row(graph: Graph, action) -> dict:
         "skill": skill,
         "resource": resource,
         "model": model,
-        "tokens": p.get("tokens"),
-        "cost": p.get("cost"),
+        "tokens": _to_int(p.get("tokens")),
+        "cost": _to_float(p.get("cost")),
         "connector": p.get("connector"),
         "source": p.get("source"),
     }
@@ -160,42 +189,56 @@ def query_actions(
     (README §4.1 ``insikt_query_actions`` / §5 view 3). Token-light: returns
     aggregates plus the most recent ``limit`` rows."""
     start, end = parse_window(window, now=now)
+    unbounded = (window or "all").strip().lower() in _UNBOUNDED
     agent_ids = set(resolve_agents(graph, agent)) if agent else None
 
     rows = []
+    undated = 0
     for action in graph.actions():
-        if not in_window(action.ts, start, end):
+        if action.ts:
+            if not in_window(action.ts, start, end):
+                continue
+        elif not unbounded:
+            # A timestamp-less action can't be placed in a bounded window.
             continue
         if type and action.props.get("type") != type:
             continue
         if agent_ids is not None and action.props.get("agent_id") not in agent_ids:
             continue
+        if not action.ts:
+            undated += 1
         rows.append(_action_row(graph, action))
 
     by_type: dict[str, int] = {}
     total_cost = 0.0
     total_tokens = 0
-    earliest = None
     backfilled = False
     for r in rows:
         by_type[r["type"]] = by_type.get(r["type"], 0) + 1
-        if r.get("cost"):
-            total_cost += float(r["cost"])
-        if r.get("tokens"):
-            total_tokens += int(r["tokens"])
-        if r["ts"] and (earliest is None or r["ts"] < earliest):
-            earliest = r["ts"]
+        if r.get("cost") is not None:
+            total_cost += r["cost"]
+        if r.get("tokens") is not None:
+            total_tokens += r["tokens"]
         if r.get("source") == "backfill":
             backfilled = True
+
+    # Reconstruction ceiling = the oldest backfilled action across the WHOLE
+    # stream, not just this window (README §3.4: be honest about the cutoff).
+    backfill_ts = [
+        a.ts for a in graph.actions() if a.ts and a.props.get("source") == "backfill"
+    ]
+    ceiling = min(backfill_ts) if backfill_ts else None
 
     rows.sort(key=lambda r: r["ts"] or "", reverse=True)
     truncated = len(rows) > limit
     note = None
     if backfilled:
-        note = (
-            "Reconstructed from the agent's retained logs (source=backfill); "
-            f"may be incomplete before {earliest}."
-        )
+        note = "Reconstructed from the agent's retained logs (source=backfill)"
+        if ceiling:
+            note += f"; the audit cannot see actions before {ceiling}"
+        if undated:
+            note += f"; {undated} action(s) had no timestamp and are shown only in the unbounded view"
+        note += "."
 
     return {
         "window": window,
@@ -228,8 +271,8 @@ def cost_ledger(graph: Graph, agent: Optional[str] = None) -> dict:
         model_id = action.props.get("model_id")
         m = graph.get(model_id) if model_id else None
         key = m.label if m else "unknown"
-        tokens = int(action.props.get("tokens") or 0)
-        cost = float(action.props.get("cost") or 0.0)
+        tokens = _to_int(action.props.get("tokens")) or 0
+        cost = _to_float(action.props.get("cost")) or 0.0
         total_tokens += tokens
         total_cost += cost
 
@@ -267,13 +310,17 @@ def explain_node(graph: Graph, node_id: str) -> Optional[dict]:
         "id": node.id,
         "type": node.type.value,
         "label": node.label,
-        "props": {k: v for k, v in node.props.items() if k != "body"},
+        "props": {k: v for k, v in node.props.items() if k not in ("body", "body_excerpt")},
     }
     if node.type == NodeType.SKILL:
         base["detail"] = _skill_detail(graph, node)
-        body = node.props.get("body")
-        if body:
-            base["body_excerpt"] = body[:1000]
+        # Prefer the precomputed, redacted excerpt; fall back to redacting the
+        # raw body (present on an in-memory graph that hasn't been persisted).
+        excerpt = node.props.get("body_excerpt")
+        if excerpt is None and node.props.get("body"):
+            excerpt = redact_secrets(node.props["body"][:1000])
+        if excerpt:
+            base["body_excerpt"] = excerpt
     elif node.type == NodeType.ACTION:
         base["detail"] = _action_row(graph, node)
     else:
@@ -296,7 +343,7 @@ def graph_payload(graph: Graph) -> dict:
     secret-adjacent text."""
     nodes = []
     for n in graph.nodes.values():
-        props = {k: v for k, v in n.props.items() if k not in ("body",)}
+        props = {k: v for k, v in n.props.items() if k not in ("body", "body_excerpt")}
         nodes.append(
             {
                 "id": n.id,

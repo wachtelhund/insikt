@@ -66,7 +66,10 @@ def query_actions_impl(db_path, window="yesterday", agent=None, type=None) -> di
         if sid is None:
             return dict(_NO_SNAPSHOT)
         graph = store.load_graph(sid)
-        return query_actions(graph, window=window, type=type, agent=agent)
+        try:
+            return query_actions(graph, window=window, type=type, agent=agent)
+        except ValueError as exc:
+            return {"error": "bad_window", "message": str(exc)}
 
 
 def capability_surface_impl(db_path, agent=None) -> dict:
@@ -91,13 +94,15 @@ def risk_report_impl(db_path, agent=None) -> dict:
             hygiene = HygieneEngine().scan(graph).to_dict()
         if agent:
             ids = set(resolve_agents(graph, agent))
-            hygiene = {
-                "findings": [
-                    f for f in hygiene["findings"]
-                    if f.get("agent_id") in ids or f.get("node_id") in ids
-                ],
-                "scores": {k: v for k, v in hygiene["scores"].items() if k in ids},
-            }
+            scores = {k: v for k, v in hygiene["scores"].items() if k in ids}
+            # Show exactly the findings attributed to the surviving agents'
+            # scores, so the findings list can't contradict the score (a
+            # skill-level finding is owned by the agents that use the skill).
+            seen: dict[str, dict] = {}
+            for s in scores.values():
+                for f in s.get("findings", []):
+                    seen[f["id"]] = f
+            hygiene = {"findings": list(seen.values()), "scores": scores}
         return hygiene
 
 
@@ -148,6 +153,10 @@ def self_report_impl(db_path) -> dict:
             "permissions": PERMISSIONS,
             "self_scan": {
                 "result": "pass",
+                "kind": "static-declaration",
+                "note": "These are Insikt's design constraints, declared statically. A "
+                "build-time self-scan of the released artifact + signature verification "
+                "is on the §8.2 integrity roadmap.",
                 "factors": [
                     "read-only file access; no write-back to the agent",
                     "no network egress; no shell execution",

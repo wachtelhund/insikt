@@ -27,9 +27,10 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Optional
 
-from ..model import ActionType, Graph, NodeType, Rel, Source, action_id, make_id
+from ..model import ActionType, Graph, NodeType, Rel, Source, action_id
+from ..redact import redact_secrets
 from .base import Collector, CollectorResult
-from .hermes import _credential_scope, _read_jsonl, _resource_kind
+from .hermes import _read_jsonl, _resource_kind
 
 FRAMEWORK = "openclaw"
 _VALID_ACTION_TYPES = {t.value for t in ActionType}
@@ -152,10 +153,12 @@ class OpenClawCollector(Collector):
                 except OSError:
                     continue
             origin_hash = sha256(raw).hexdigest() if raw else None
+            body = "\n".join(body_parts)
             sid = g.node(
                 NodeType.SKILL, FRAMEWORK, name, label=name, name=name,
                 source="clawhub", package_version=version, origin_hash=origin_hash,
-                self_authored=False, path=str(pkg_dir), body="\n".join(body_parts)[:20000],
+                self_authored=False, path=str(pkg_dir), body=body[:20000],
+                body_excerpt=redact_secrets(body[:1000]),
                 declared_tools=[], declared_network=[], declared_credentials=[],
             )
             g.add_edge(agent_id, Rel.USES, sid)
@@ -200,7 +203,10 @@ class OpenClawCollector(Collector):
             if rec.get("cron"):
                 props["cron"] = rec["cron"]
 
-            tail = action_id(FRAMEWORK, ts or "", atype, summary, "").split(":", 1)[1]
+            extra = "|".join(
+                str(rec.get(k, "")) for k in ("model", "tokens", "cost", "resource", "connector", "cron")
+            )
+            tail = action_id(FRAMEWORK, ts or "", atype, summary, "", extra).split(":", 1)[1]
             nid = g.node(NodeType.ACTION, tail, label=f"{atype}: {summary}", ts=ts, **props)
             g.add_edge(nid, Rel.EXECUTED_BY, agent_id)
             if model_id:

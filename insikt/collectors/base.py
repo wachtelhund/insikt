@@ -9,7 +9,7 @@ and MCP responses can say "incomplete" rather than silently lie.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..model import Graph
 
@@ -21,7 +21,6 @@ class CollectorResult:
     available: bool
     supported_versions: str = "*"
     detected_version: str | None = None
-    notes: list[str] = field(default_factory=list)
 
 
 class Collector(ABC):

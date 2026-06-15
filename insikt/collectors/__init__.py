@@ -9,13 +9,9 @@ from .base import Collector, CollectorResult
 from .hermes import HermesCollector
 from .openclaw import OpenClawCollector
 
-# Registry of known collectors, in scan order.
-COLLECTORS: list[type[Collector]] = [HermesCollector, OpenClawCollector]
-
 __all__ = [
     "Collector",
     "CollectorResult",
     "HermesCollector",
     "OpenClawCollector",
-    "COLLECTORS",
 ]

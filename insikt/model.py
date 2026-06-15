@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Optional
 
 
 class NodeType(str, Enum):
@@ -81,14 +81,19 @@ def make_id(node_type: NodeType, *parts: object) -> str:
     return f"{node_type.value}:{tail}" if tail else node_type.value
 
 
-def action_id(framework: str, ts: str, atype: str, summary: str, profile: str = "") -> str:
+def action_id(
+    framework: str, ts: str, atype: str, summary: str, profile: str = "", extra: str = ""
+) -> str:
     """Content-addressed action id so re-scanning the same log line dedups.
 
     Backfill is idempotent: running ``insikt scan`` twice over the same logs must
     not double-count actions, so the id is a hash of the action's identity.
+    ``extra`` carries discriminating fields (model/tokens/cost/resource/…) so two
+    genuinely distinct events that share ts+type+summary do not collide and
+    silently merge.
     """
     digest = hashlib.sha1(
-        f"{framework}|{ts}|{atype}|{summary}|{profile}".encode("utf-8")
+        f"{framework}|{ts}|{atype}|{summary}|{profile}|{extra}".encode("utf-8")
     ).hexdigest()[:16]
     return f"{NodeType.ACTION.value}:{digest}"
 
@@ -265,8 +270,3 @@ class RiskScore:
             "score": self.score,
             "findings": [f.to_dict() for f in self.findings],
         }
-
-
-def iter_factor_lines(findings: Iterable[Finding]) -> Iterator[str]:
-    for f in findings:
-        yield f"[{f.severity.value}] {f.title}"

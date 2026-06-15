@@ -96,7 +96,6 @@ CATEGORY_TITLE = {
 }
 
 _URL_RE = re.compile(r"https?://([A-Za-z0-9._-]+)")
-_BARE_HOST_RE = re.compile(r"\b([a-z0-9-]+(?:\.[a-z0-9-]+)+)\b", re.IGNORECASE)
 
 # Default allowlist of egress hosts considered routine for an agent box.
 DEFAULT_HOST_ALLOWLIST = {

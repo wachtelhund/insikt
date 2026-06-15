@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -24,15 +23,11 @@ from .collectors import HermesCollector, OpenClawCollector
 from .hygiene import HygieneEngine, load_advisory_feed
 from .model import Graph, NodeType
 from .report import render_report
-from .store import Store, diff_graphs
+from .store import Store, _now_iso, diff_graphs
 
 DEFAULT_DB = "~/.insikt/insikt.db"
 DEFAULT_OUT = "overview.html"
 BUNDLED_FEED = Path(__file__).resolve().parent / "data" / "advisory_feed.json"
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _build_collectors(args) -> list:
@@ -91,6 +86,12 @@ def cmd_scan(args) -> int:
                 drift = diff_graphs(prev_graph, graph, since_id=prev_id, to_id=None)
 
     hygiene = HygieneEngine(advisory_feed=feed).scan(graph, drift=drift)
+
+    # The static scan is done; the raw skill body is no longer needed and must
+    # NOT be persisted — it can contain hardcoded secrets. Keep only the
+    # redacted body_excerpt the collector already produced.
+    for skill in graph.by_type(NodeType.SKILL):
+        skill.props.pop("body", None)
 
     snapshot_id = None
     meta = {

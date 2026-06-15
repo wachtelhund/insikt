@@ -39,6 +39,7 @@ from ..model import (
     action_id,
     make_id,
 )
+from ..redact import redact_list, redact_secrets
 from .base import Collector, CollectorResult
 
 FRAMEWORK = "hermes"
@@ -139,7 +140,7 @@ class HermesCollector(Collector):
         host = config.get("host")
 
         agents = self._build_agents(g, config, host)
-        self._build_models(g, config, agents)
+        self._build_models(g, config)
         self._build_connectors(g, config, agents)
         cred_names = self._read_env_names(g)
         self._build_credentials(g, cred_names)
@@ -218,7 +219,7 @@ class HermesCollector(Collector):
             agent_ids.append(aid)
         return agent_ids
 
-    def _build_models(self, g: Graph, config: dict, agents: list[str]) -> None:
+    def _build_models(self, g: Graph, config: dict) -> None:
         for m in config.get("models") or []:
             if not isinstance(m, dict):
                 continue
@@ -303,6 +304,7 @@ class HermesCollector(Collector):
                 self_authored=self_authored,
                 path=str(path),
                 body=body[:20000],
+                body_excerpt=redact_secrets(body[:1000]),
                 declared_tools=declared_tools,
                 declared_network=declared_network,
                 declared_credentials=declared_creds,
@@ -371,8 +373,8 @@ class HermesCollector(Collector):
                     label=name,
                     kind="mcp_server",
                     value=name,
-                    command=(spec or {}).get("command"),
-                    args=(spec or {}).get("args"),
+                    command=redact_secrets((spec or {}).get("command")),
+                    args=redact_list((spec or {}).get("args")),
                 )
                 if mcp_tool is None:
                     mcp_tool = g.node(NodeType.TOOL, "mcp", label="mcp", kind="mcp")
@@ -455,7 +457,10 @@ class HermesCollector(Collector):
         profile = rec.get("profile")
         summary = str(rec.get("summary") or rec.get("payload_summary") or atype)
         aid = resolve_agent(profile)
-        aid_full = action_id(FRAMEWORK, ts or "", atype, summary, profile or "")
+        extra = "|".join(
+            str(rec.get(k, "")) for k in ("model", "tokens", "cost", "resource", "connector", "server", "tool")
+        )
+        aid_full = action_id(FRAMEWORK, ts or "", atype, summary, profile or "", extra)
         nid_tail = aid_full.split(":", 1)[1]
 
         props: dict = {

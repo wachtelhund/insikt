@@ -84,6 +84,11 @@ def populated_db(tmp_db, hermes_graph):
         Path(__file__).resolve().parents[1] / "insikt" / "data" / "advisory_feed.json"
     )
     hygiene = HygieneEngine(advisory_feed=feed).scan(hermes_graph)
+    # mirror cmd_scan: never persist raw skill bodies
+    from insikt.model import NodeType
+
+    for skill in hermes_graph.by_type(NodeType.SKILL):
+        skill.props.pop("body", None)
     store = Store(tmp_db)
     store.write_snapshot(
         hermes_graph,

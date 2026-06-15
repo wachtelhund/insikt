@@ -1,86 +1,100 @@
 #!/bin/sh
-# Insikt v0 installer (README §9.1).
+# Insikt installer (README §9.1) — one command, sets everything up.
 #
-#   curl -fsSL https://insikt.dev/install.sh | sh   # (once published)
-#   ./install.sh                                    # from a local checkout
+#   curl -fsSL https://insikt.dev/install.sh | sh     # (once published)
+#   ./install.sh                                      # from a local clone
 #
-# This is the SAME doorway the agent-install skill (README §8) shells out to —
-# one installer, two doorways (human via curl|sh, agent via the skill).
+# It: detects OS/arch (incl. Raspberry Pi arm64/armhf), finds a working Python
+# (or uses uv to fetch one), installs Insikt into an isolated environment, puts
+# `insikt` on your PATH, and runs the first scan. This is the SAME doorway the
+# agent-install skill (§8) shells out to — one installer, two doorways.
 #
 # CAVEAT, kept in view on purpose (README §9.1): `curl | sh` is the exact
 # pipe-the-internet-into-your-shell pattern Insikt's own hygiene scanner flags.
-# It is an acceptable v0 expedient while the audience is small and you control
-# the endpoint, but it is a stepping stone, not the destination. The integrity
-# model in README §8 (signed/pinned/reproducible releases, a verified Homebrew
-# tap, signed .debs) is the graduation path that must land before Insikt asks
-# anyone to trust it as a security tool. Even in v0: serve over HTTPS from a
-# domain you control, publish checksums next to the release, and verify them
+# Acceptable as a v0 expedient while the audience is small and you control the
+# endpoint; the graduation path is signed/pinned/reproducible releases (§8). Even
+# now: serve over HTTPS from a domain you control and verify a published checksum
 # before running anything.
-#
-# Deviation from the spec: the spec leans toward a single static Go binary. This
-# implementation is Python (it matches Hermes's runtime and FastMCP), so v0
-# installs into an isolated environment instead of dropping a prebuilt binary.
 set -eu
 
 INSIKT_HOME="${INSIKT_HOME:-$HOME/.insikt}"
 BIN_DIR="${INSIKT_BIN_DIR:-$HOME/.local/bin}"
-# Where to install from. Defaults to a local checkout if present, else a pinned
-# remote ref (placeholder until published).
-INSIKT_SOURCE="${INSIKT_SOURCE:-}"
+VENV="$INSIKT_HOME/venv"
 
-say() { printf '\033[1;33m▸\033[0m %s\n' "$1"; }
-die() { printf '\033[1;31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
+say()  { printf '\033[1;33m▸\033[0m %s\n' "$1"; }
+ok()   { printf '\033[1;32m✓\033[0m %s\n' "$1"; }
+die()  { printf '\033[1;31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
 
-# 1. Detect OS + arch (incl. arm64 / armhf for the Raspberry Pi — the primary target).
+# --- 1. platform ----------------------------------------------------------
 OS="$(uname -s)"; ARCH="$(uname -m)"
 say "platform: ${OS} ${ARCH}"
 case "$ARCH" in
-  aarch64|arm64) say "arm64 detected (Raspberry Pi 64-bit / Apple Silicon)";;
-  armv7l|armhf)  say "armhf detected (Raspberry Pi 32-bit)";;
+  aarch64|arm64) say "arm64 (Raspberry Pi 64-bit / Apple Silicon)";;
+  armv7l|armhf)  say "armhf (Raspberry Pi 32-bit)";;
 esac
 
-# 2. Require Python >= 3.10.
-PY="$(command -v python3 || true)"
-[ -n "$PY" ] || die "python3 not found. Install Python >= 3.10 and re-run."
-"$PY" - <<'PYEOF' || die "Python >= 3.10 required."
-import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)
-PYEOF
-say "python: $($PY --version 2>&1)"
-
-# 3. Decide the source.
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-if [ -z "$INSIKT_SOURCE" ]; then
-  if [ -f "$SCRIPT_DIR/pyproject.toml" ] && grep -q '^name = "insikt"' "$SCRIPT_DIR/pyproject.toml" 2>/dev/null; then
+# --- 2. where to install from --------------------------------------------
+# Local clone if present, else the published package (override with INSIKT_SOURCE).
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || echo "")"
+if [ -z "${INSIKT_SOURCE:-}" ]; then
+  if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ] && grep -q '^name = "insikt"' "$SCRIPT_DIR/pyproject.toml" 2>/dev/null; then
     INSIKT_SOURCE="$SCRIPT_DIR"
-    say "installing from local checkout: $INSIKT_SOURCE"
   else
     INSIKT_SOURCE="git+https://github.com/sourceful/insikt.git"
-    say "installing from $INSIKT_SOURCE"
-    # NOTE: in a signed release, fetch the wheel + its published checksum here
-    # and verify the checksum BEFORE installing (README §9.1).
+    # In a signed release, fetch the wheel + its checksum here and verify BEFORE install (§9.1).
   fi
 fi
+say "source: $INSIKT_SOURCE"
 
-# 4. Install into an isolated environment (pipx if available, else a venv).
-if command -v pipx >/dev/null 2>&1; then
-  say "installing with pipx"
-  pipx install --force "$INSIKT_SOURCE"
+# --- 3. pick a working Python (>=3.10 with a functional venv/pyexpat) -----
+# Homebrew's Python 3.14 currently ships a broken pyexpat that breaks pip's
+# bootstrap, so we test each candidate rather than trusting `python3`.
+python_works() {
+  command -v "$1" >/dev/null 2>&1 || return 1
+  "$1" - >/dev/null 2>&1 <<'PY'
+import sys
+assert sys.version_info >= (3, 10)
+import ensurepip, xml.parsers.expat   # both must import for `python -m venv` + pip to work
+PY
+}
+GOODPY=""
+for c in "${INSIKT_PYTHON:-}" python3.13 python3.12 python3.11 python3.10 python3; do
+  [ -n "$c" ] || continue
+  if python_works "$c"; then GOODPY="$c"; break; fi
+done
+
+# --- 4. create the isolated env + install --------------------------------
+mkdir -p "$INSIKT_HOME" "$BIN_DIR"
+rm -rf "$VENV"
+if command -v uv >/dev/null 2>&1; then
+  say "using uv"
+  if [ -n "$GOODPY" ]; then uv venv --python "$GOODPY" "$VENV" >/dev/null
+  else uv venv --python 3.13 "$VENV" >/dev/null; fi   # uv fetches 3.13 if no system Python works
+  uv pip install --python "$VENV/bin/python" --quiet "$INSIKT_SOURCE"
 else
-  say "installing into venv at $INSIKT_HOME/venv"
-  mkdir -p "$INSIKT_HOME" "$BIN_DIR"
-  "$PY" -m venv "$INSIKT_HOME/venv"
-  "$INSIKT_HOME/venv/bin/pip" install --quiet --upgrade pip
-  "$INSIKT_HOME/venv/bin/pip" install --quiet "$INSIKT_SOURCE"
-  ln -sf "$INSIKT_HOME/venv/bin/insikt" "$BIN_DIR/insikt"
-  case ":$PATH:" in *":$BIN_DIR:"*) :;; *) say "add $BIN_DIR to your PATH";; esac
+  [ -n "$GOODPY" ] || die "No working Python >=3.10 found and 'uv' is not installed.
+Install uv (https://docs.astral.sh/uv/) or a working Python 3.11/3.12/3.13, then re-run."
+  say "using $($GOODPY --version 2>&1)"
+  "$GOODPY" -m venv "$VENV"
+  "$VENV/bin/python" -m pip install --quiet --upgrade pip
+  "$VENV/bin/python" -m pip install --quiet "$INSIKT_SOURCE"
 fi
+ln -sf "$VENV/bin/insikt" "$BIN_DIR/insikt"
+ok "installed $("$VENV/bin/insikt" --version) → $BIN_DIR/insikt"
 
-# 5. First run: scan and emit overview.html (README §9.1, §11 v0).
+# --- 5. first run ---------------------------------------------------------
 say "running first scan…"
-if command -v insikt >/dev/null 2>&1; then INSIKT=insikt; else INSIKT="$INSIKT_HOME/venv/bin/insikt"; fi
-"$INSIKT" scan || say "no agent state found yet — run 'insikt scan' once an agent is set up"
+"$VENV/bin/insikt" scan || say "no agent state found yet — run 'insikt scan' once an agent (Hermes/OpenClaw) is set up"
 
-say "done. Next:"
-echo "    insikt scan            # refresh the snapshot + overview.html"
-echo "    insikt mcp             # run the read-only MCP server for your agent"
-echo "    insikt --help"
+echo
+ok "done"
+case ":$PATH:" in *":$BIN_DIR:"*) :;; *) say "add this to your shell profile:  export PATH=\"$BIN_DIR:\$PATH\"";; esac
+cat <<EOF
+
+  insikt scan        refresh the snapshot + overview.html
+  insikt mcp         run the read-only MCP server for your agent
+  insikt --help
+
+  Register with your agent (Hermes example):
+    hermes mcp add insikt --command "$BIN_DIR/insikt mcp"
+EOF

@@ -5,54 +5,47 @@
 
 ---
 
-## 0. Implementation status & quickstart
-
-This repo now contains a working **v0+** implementation (Python). What's built:
-
-- **Hermes collector** (read-only, graceful `partial` degradation) + a lean
-  **OpenClaw collector** that proves the cross-framework split (§3, §7).
-- Normalized **graph + action timeline** model and an **append-only SQLite**
-  snapshot store with diff + meta-audit (§2, §7).
-- **Hygiene engine**: static scan, exfil-triad detection, advisory-feed
-  fingerprinting, exposure checks, drift, per-agent scores (§6).
-- Self-contained, **offline `overview.html`** — graph + capability surface +
-  timeline + cost ledger + hygiene + diff, no CDN (§5, §9).
-- Read-only **MCP server** with all six tools + meta-audit (§4).
-- A realistic **fixture** agent home, **67 passing tests**, and `install.sh`.
-
-> **One decision worth stating:** the spec offers Go *or* Python; this build is
-> **Python** (it matches Hermes's runtime and FastMCP). Trade-off: not a single
-> static binary, so the v0 `curl|sh` installs into an isolated venv/pipx env
-> rather than dropping a prebuilt binary. See [`CLAUDE.md`](CLAUDE.md) for the
-> code map. Deferred (kept pluggable): live-capture hooks (§10.1), Honcho, the
-> live web-UI server, signed/reproducible releases, the Scanopy overlay (v3+).
+## 0. Install
 
 ```sh
-# Homebrew's Python 3.14 has a broken pyexpat; use 3.13 via uv.
-uv venv --python 3.13 .venv
-uv pip install --python .venv/bin/python -e . pytest
-
-.venv/bin/python -m pytest                 # run the suite
-
-# Scan the bundled fixture agent home and open the report:
-.venv/bin/insikt scan --hermes-home tests/fixtures/hermes_home --out overview.html --open
-
-# Other commands:
-.venv/bin/insikt snapshots                 # list stored snapshots
-.venv/bin/insikt diff                       # what changed since the last scan
-.venv/bin/insikt queries                    # the meta-audit log
-.venv/bin/insikt mcp --db ~/.insikt/insikt.db   # read-only MCP server (stdio)
+curl -fsSL https://insikt.dev/install.sh | sh
 ```
 
-Register the MCP server with an agent, e.g. Hermes (§4.2):
+One command. It detects your OS/arch (including Raspberry Pi arm64/armhf), finds
+a working Python (or fetches one via `uv`), installs Insikt into an isolated
+environment, puts `insikt` on your `PATH`, and runs the first scan to produce
+`overview.html`. It's also exactly what the agent-install skill (§8) runs under
+the hood — **one installer, two doorways**.
+
+Until the hosted script is published, install from a clone instead — same script:
 
 ```sh
-hermes mcp add insikt --command "insikt mcp --db ~/.insikt/insikt.db"
+git clone https://github.com/sourceful/insikt && cd insikt && ./install.sh
 ```
 
-Then the agent simply *has* `insikt_query_actions`, `insikt_capability_surface`,
-`insikt_risk_report`, `insikt_diff`, `insikt_explain`, and `insikt_self_report`,
-and reaches for them when the user asks "what did you do yesterday?".
+Then:
+
+```sh
+insikt scan        # refresh the snapshot + overview.html
+insikt mcp         # run the read-only MCP server for your agent
+insikt --help
+```
+
+Wire it into your agent so it can answer "what did you do yesterday?" itself
+(Hermes example, §4.2):
+
+```sh
+hermes mcp add insikt --command "insikt mcp"
+```
+
+Now the agent simply *has* `insikt_query_actions`, `insikt_capability_surface`,
+`insikt_risk_report`, `insikt_diff`, `insikt_explain`, and `insikt_self_report`.
+
+> Built in **Python** (the spec offers Go *or* Python; Python matches Hermes's
+> runtime and FastMCP), so v0 installs into an isolated env rather than dropping
+> a single static binary. Code map, architecture, and how to run the tests:
+> [`CLAUDE.md`](CLAUDE.md). The `curl|sh` caveat and the signed-release
+> graduation path are spelled out in §9.1.
 
 ---
 

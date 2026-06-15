@@ -1,8 +1,8 @@
 # CLAUDE.md — Insikt
 
 Architecture, patterns, and domain context for working in this repo. The product
-spec lives in [README.md](README.md); read it first. This file is the map of the
-code that implements it.
+spec lives in [SPEC.md](SPEC.md); read it first. [README.md](README.md) is the
+short install/usage guide. This file is the map of the code that implements it.
 
 ## What this is
 

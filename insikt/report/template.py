@@ -198,10 +198,11 @@ function activate(id){
     }).join("")||`<tr><td colspan="5" class="muted">no skills</td></tr>`;
     const conns=a.connectors.map(c=>`<span class="tag">${esc(c.platform)}${c.accepts_strangers?' ⚠ strangers':''}</span>`).join("")||'<span class="muted">none</span>';
     const models=a.models.map(m=>`<span class="tag">${esc(m.provider)}/${esc(m.model_name)}</span>`).join("")||'<span class="muted">none</span>';
+    const mcp=(a.mcp_servers||[]).map(s=>`<span class="tag">${esc(s.name)}</span>`).join("");
     return `<div class="agentcard">
       <div class="head"><h3 style="margin:0">${esc(a.label)} ${a.risk?sev(a.risk):''}</h3>
         <span class="muted">${esc(a.framework||'')} · ${esc(a.version||'?')} · bind ${esc(a.gateway_bind||'?')} · auth ${esc(a.auth_mode||'?')}${a.memory_items!=null?' · '+esc(a.memory_items)+' memories':''}</span></div>
-      <div style="margin:6px 0"><span class="muted">Connectors:</span> ${conns} &nbsp; <span class="muted">Models:</span> ${models}</div>
+      <div style="margin:6px 0"><span class="muted">Connectors:</span> ${conns} &nbsp; <span class="muted">Models:</span> ${models}${mcp?' &nbsp; <span class="muted">MCP:</span> '+mcp:''}</div>
       <table><tr><th>Skill</th><th>Tools</th><th>Reaches</th><th>Credential reads</th><th>Risk</th></tr>${skills}</table>
     </div>`;
   }).join("");

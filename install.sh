@@ -63,8 +63,9 @@ for c in "${INSIKT_PYTHON:-}" python3.13 python3.12 python3.11 python3.10 python
   if python_works "$c"; then GOODPY="$c"; break; fi
 done
 
-# --- 4. create the isolated env + install --------------------------------
+# --- 4. create the isolated env + install (idempotent: re-run to update) --
 mkdir -p "$INSIKT_HOME" "$BIN_DIR"
+PRIOR="$("$VENV/bin/insikt" --version 2>/dev/null || true)"
 rm -rf "$VENV"
 if command -v uv >/dev/null 2>&1; then
   say "using uv"
@@ -80,7 +81,11 @@ Install uv (https://docs.astral.sh/uv/) or a working Python 3.11/3.12/3.13, then
   "$VENV/bin/python" -m pip install --quiet "$INSIKT_SOURCE"
 fi
 ln -sf "$VENV/bin/insikt" "$BIN_DIR/insikt"
-ok "installed $("$VENV/bin/insikt" --version) → $BIN_DIR/insikt"
+printf '%s\n' "$INSIKT_SOURCE" > "$INSIKT_HOME/source"   # remembered by `insikt update`
+NEW="$("$VENV/bin/insikt" --version)"
+if [ -n "$PRIOR" ] && [ "$PRIOR" != "$NEW" ]; then ok "updated $PRIOR → $NEW"
+elif [ -n "$PRIOR" ]; then ok "reinstalled $NEW (already current)"
+else ok "installed $NEW → $BIN_DIR/insikt"; fi
 
 # --- 5. first run ---------------------------------------------------------
 say "running first scan…"

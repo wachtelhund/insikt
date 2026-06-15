@@ -268,6 +268,41 @@ def cmd_queries(args) -> int:
         store.close()
 
 
+def cmd_update(args) -> int:
+    """Update Insikt to the latest release, re-installing from the source the
+    installer recorded (a clone path, a git URL, or the published package).
+    Equivalent to re-running the installer, which is also always safe."""
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    venv_python = sys.executable
+    home = Path(sys.prefix).parent  # the venv lives at <INSIKT_HOME>/venv
+    marker = home / "source"
+    source = (
+        os.environ.get("INSIKT_SOURCE")
+        or (marker.read_text(encoding="utf-8").strip() if marker.exists() else None)
+        or "insikt"  # the published package, once on PyPI
+    )
+    print(f"updating insikt from: {source}")
+    if shutil.which("uv"):
+        cmd = ["uv", "pip", "install", "--python", venv_python, "--upgrade", source]
+    else:
+        cmd = [venv_python, "-m", "pip", "install", "--upgrade", source]
+    rc = subprocess.call(cmd)
+    if rc != 0:
+        print(
+            "update failed — re-run the installer instead:\n"
+            "  curl -fsSL https://insikt.dev/install.sh | sh",
+            file=sys.stderr,
+        )
+        return rc
+    ver = subprocess.run([venv_python, "-m", "insikt", "--version"], capture_output=True, text=True)
+    print((ver.stdout or ver.stderr).strip() or "updated")
+    return 0
+
+
 def cmd_mcp(args) -> int:
     from .mcp_server import run
 
@@ -321,6 +356,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(sp)
     sp.add_argument("--limit", type=int, default=50)
     sp.set_defaults(func=cmd_queries)
+
+    sp = sub.add_parser("update", help="update insikt to the latest release")
+    sp.set_defaults(func=cmd_update)
 
     sp = sub.add_parser("mcp", help="run the read-only MCP server")
     add_db(sp)

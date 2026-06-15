@@ -1,4 +1,3 @@
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,32 +10,6 @@ OPENCLAW_HOME = FIXTURES / "openclaw_home"
 # Fixed clock so windowed queries are deterministic. currentDate in the spec is
 # 2026-06-15, and the fixture actions are dated 2026-06-14, so "yesterday" hits.
 NOW = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _memory_db():
-    """Generate the Hermes memory.db fixture (kept out of git; binary)."""
-    db = HERMES_HOME / "memory" / "memory.db"
-    db.parent.mkdir(parents=True, exist_ok=True)
-    if db.exists():
-        db.unlink()
-    conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE memory (id INTEGER PRIMARY KEY, topic TEXT, content TEXT)")
-    conn.executemany(
-        "INSERT INTO memory (topic, content) VALUES (?, ?)",
-        [
-            ("pi", "the pi runs hermes"),
-            ("user", "prefers terse replies"),
-            ("backup", "nightly at 2am"),
-            ("telegram", "chat id 12345"),
-            ("weather", "stockholm"),
-            ("temp", "alert above 70C"),
-            ("project", "building insikt"),
-        ],
-    )
-    conn.commit()
-    conn.close()
-    yield
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 {
   "version": "2026-06-15.sample",
-  "note": "SAMPLE advisory feed bundled with Insikt v0. NOT signed. In production this must be a signed/pinned feed (README \u00a76, \u00a78.2). Hashes below are known-bad skill fingerprints from (simulated) community supply-chain advisories.",
+  "note": "SAMPLE advisory feed bundled with Insikt v0. NOT signed. Production must use a signed/pinned feed (SPEC \u00a76, \u00a78.2). Hashes are known-bad skill fingerprints.",
   "known_bad_hashes": [
-    "ab8c4b3a0208007b2c8f97d61d76c6c2a26e5861db257e2cdb012704b591e329"
+    "9513fa90605c7093ef82e859955e62e578cddb09f104d2c0421a3dba85a6657f"
   ]
 }

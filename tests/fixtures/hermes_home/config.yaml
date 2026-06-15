@@ -1,21 +1,38 @@
-# Sample Hermes home for fixtures/demo. Matches HermesCollector supported range.
-version: "0.9.2"
-host: pi-hermes
+# Sample Hermes config mirroring the real ~/.hermes/config.yaml layout.
+_config_version: 42
+model:
+  default: gpt-4o
+  provider: openai
+  openrouter:
+    api_key: FAKE-do-not-use
+agent:
+  max_turns: 150
+security:
+  tirith_enabled: false        # skill scanner OFF -> hygiene posture finding
+  allow_lazy_installs: true    # unattended installs -> finding
+  redact_secrets: true
+skills:
+  external_dirs: []
+  inline_shell: false
+  guard_agent_created: false   # self-authored skills unguarded -> finding
+memory:
+  provider: honcho
+  honcho:
+    base_url: http://localhost:8000
+approvals:
+  mode: smart
+  cron_mode: approve
+command_allowlist:
+slack:
+  require_mention: true        # mention required -> not strangers
+  allowed_channels: ''
+telegram:
+  allowed_chats: ''            # no allow-list -> accepts strangers
 gateway:
-  bind: "0.0.0.0:8765"   # exposed on all interfaces ...
-  auth: none             # ... with no auth -> exposure finding
-models:
-  - provider: anthropic
-    name: claude-opus-4-8
-    endpoint: https://api.anthropic.com
-  - provider: openai
-    name: gpt-4o
-    endpoint: https://api.openai.com
-connectors:
-  - platform: telegram
-    accepts_strangers: true   # reachable by strangers -> finding
-  - platform: whatsapp
-    accepts_strangers: false
-profiles:
-  - default
-  - research
+  strict: false
+  platforms:
+  - telegram
+  telegram:
+    token: FAKE-do-not-use
+honcho:
+  enabled: true

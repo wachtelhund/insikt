@@ -77,6 +77,7 @@ class HygieneEngine:
             findings.extend(self._scan_skill(graph, skill))
 
         findings.extend(self._scan_exposure(graph))
+        findings.extend(self._scan_posture(graph))
         findings.extend(self._scan_drift(graph, drift))
 
         self._annotate(graph, findings)
@@ -236,6 +237,31 @@ class HygieneEngine:
                         factors=["tailscale_exposed"],
                     )
                 )
+        return out
+
+    # --- security posture (framework config, e.g. Hermes) ----------------
+    def _scan_posture(self, graph: Graph) -> list[Finding]:
+        """Findings from the agent's own safety config. Each only fires when the
+        agent actually reports that setting (None = framework doesn't expose it),
+        so this never produces noise for collectors that don't populate it."""
+        out: list[Finding] = []
+        checks = [
+            ("tirith_enabled", False, Severity.MEDIUM, "Skill security scanner is disabled",
+             "the agent's static skill scanner (tirith) is turned off"),
+            ("allow_lazy_installs", True, Severity.MEDIUM, "Unattended skill installs are allowed",
+             "skills can be installed without explicit confirmation"),
+            ("guard_agent_created", False, Severity.MEDIUM, "Self-authored skills are not guarded",
+             "skills the agent writes for itself are not gated before use"),
+        ]
+        for agent in graph.by_type(NodeType.AGENT):
+            p = agent.props
+            for key, bad, sev, title, detail in checks:
+                if key in p and p.get(key) == bad:
+                    out.append(Finding(
+                        id=f"posture:{key}:{agent.id}", severity=sev, title=title,
+                        detail=f"{agent.label}: {detail}", node_id=agent.id, agent_id=agent.id,
+                        factors=[f"{key}={p.get(key)}"],
+                    ))
         return out
 
     # --- drift (README §6) -----------------------------------------------

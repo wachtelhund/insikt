@@ -4,6 +4,9 @@ from insikt.hygiene import HygieneEngine, load_advisory_feed
 from insikt.model import NodeType, Severity, make_id
 
 FEED_PATH = Path(__file__).resolve().parents[1] / "insikt" / "data" / "advisory_feed.json"
+AGENT = make_id(NodeType.AGENT, "hermes", "main")
+PI = make_id(NodeType.SKILL, "hermes", "pi-temp-watch")
+BACKUP = make_id(NodeType.SKILL, "hermes", "backup-helper")
 
 
 def _scan(graph, feed=None):
@@ -12,47 +15,40 @@ def _scan(graph, feed=None):
 
 def test_exfil_triad_flagged(hermes_graph):
     res = _scan(hermes_graph)
-    pi = make_id(NodeType.SKILL, "hermes", "pi-temp-watch")
-    triad = [f for f in res.findings if f.id == f"triad:{pi}"]
+    triad = [f for f in res.findings if f.id == f"triad:{PI}"]
     assert triad and triad[0].severity == Severity.CRITICAL
     assert "shell" in triad[0].factors and "network" in triad[0].factors
 
 
 def test_fingerprint_match(hermes_graph):
-    feed = load_advisory_feed(FEED_PATH)
-    res = _scan(hermes_graph, feed=feed)
-    backup = make_id(NodeType.SKILL, "hermes", "backup-helper")
-    fp = [f for f in res.findings if f.id == f"fp:{backup}"]
+    res = _scan(hermes_graph, feed=load_advisory_feed(FEED_PATH))
+    fp = [f for f in res.findings if f.id == f"fp:{BACKUP}"]
     assert fp and fp[0].severity == Severity.CRITICAL
 
 
 def test_no_fingerprint_without_feed(hermes_graph):
-    res = _scan(hermes_graph, feed=None)
-    assert not any(f.id.startswith("fp:") for f in res.findings)
+    assert not any(f.id.startswith("fp:") for f in _scan(hermes_graph).findings)
 
 
 def test_obfuscation_and_egress(hermes_graph):
     res = _scan(hermes_graph)
-    backup = make_id(NodeType.SKILL, "hermes", "backup-helper")
-    assert any(f.id == f"cap:obfuscation:{backup}" and f.severity == Severity.HIGH for f in res.findings)
-    egress = [f for f in res.findings if f.id == f"egress:{backup}"]
-    assert egress
-    assert any("exfil.evil-example.com" in fac for fac in egress[0].factors)
+    assert any(f.id == f"cap:obfuscation:{BACKUP}" and f.severity == Severity.HIGH for f in res.findings)
+    egress = [f for f in res.findings if f.id == f"egress:{BACKUP}"]
+    assert egress and any("exfil.evil-example.com" in fac for fac in egress[0].factors)
 
 
 def test_allowlisted_host_no_egress(hermes_graph):
+    # pi-temp-watch only reaches api.telegram.org (allowlisted)
     res = _scan(hermes_graph)
-    summarize = make_id(NodeType.SKILL, "hermes", "summarize")
-    # summarize only reaches api.anthropic.com (allowlisted)
-    assert not any(f.id == f"egress:{summarize}" for f in res.findings)
+    assert not any(f.id == f"egress:{PI}" for f in res.findings)
 
 
-def test_exposure_critical_with_strangers(hermes_graph):
+def test_posture_findings(hermes_graph):
     res = _scan(hermes_graph)
-    default = make_id(NodeType.AGENT, "hermes", "default")
-    exposure = [f for f in res.findings if f.id == f"exposure:{default}"]
-    assert exposure and exposure[0].severity == Severity.CRITICAL
-    assert any("accepts strangers" in fac or "stranger" in fac.lower() for fac in exposure[0].factors)
+    ids = {f.id for f in res.findings}
+    assert f"posture:tirith_enabled:{AGENT}" in ids
+    assert f"posture:allow_lazy_installs:{AGENT}" in ids
+    assert f"posture:guard_agent_created:{AGENT}" in ids
 
 
 def test_stranger_connector_finding(hermes_graph):
@@ -60,28 +56,32 @@ def test_stranger_connector_finding(hermes_graph):
     assert any(f.id.startswith("stranger:") for f in res.findings)
 
 
+def test_posture_silent_when_not_reported():
+    # an agent that doesn't report these flags gets no posture findings (no noise)
+    from insikt.model import Graph
+
+    g = Graph()
+    g.node(NodeType.AGENT, "x", "default", label="x/default", framework="x")
+    res = _scan(g)
+    assert not any(f.id.startswith("posture:") for f in res.findings)
+
+
 def test_risk_scores_enumerate_factors(hermes_graph):
-    feed = load_advisory_feed(FEED_PATH)
-    res = _scan(hermes_graph, feed=feed)
-    default = make_id(NodeType.AGENT, "hermes", "default")
-    score = res.scores[default]
+    res = _scan(hermes_graph, feed=load_advisory_feed(FEED_PATH))
+    score = res.scores[AGENT]
     assert score.score > 0
-    # never just a number: each contributing finding is present
     assert score.findings
-    # findings sorted worst-first
     weights = [f.severity.weight for f in score.findings]
     assert weights == sorted(weights, reverse=True)
 
 
 def test_graph_annotated_with_risk(hermes_graph):
-    feed = load_advisory_feed(FEED_PATH)
-    _scan(hermes_graph, feed=feed)
-    backup = hermes_graph.get(make_id(NodeType.SKILL, "hermes", "backup-helper"))
-    assert backup.props.get("risk") == "critical"
+    _scan(hermes_graph, feed=load_advisory_feed(FEED_PATH))
+    assert hermes_graph.get(BACKUP).props.get("risk") == "critical"
 
 
 def test_drift_finding():
-    from insikt.model import Graph, Rel
+    from insikt.model import Graph
 
     g = Graph()
     sid = g.node(NodeType.SKILL, "hermes", "evolver", label="evolver", name="evolver", self_authored=True)

@@ -1,0 +1,19 @@
+{
+  "updated_at": "2026-06-14T12:00:00Z",
+  "jobs": [
+    {
+      "id": "5a0e42d7508a", "name": "nightly-backup", "skill": "backup-helper",
+      "model": "claude-opus-4-8", "provider": "anthropic",
+      "schedule": {"kind": "cron", "expr": "0 2 * * *", "display": "daily at 02:00"},
+      "schedule_display": "daily at 02:00", "enabled": true, "state": "scheduled",
+      "created_at": "2026-06-01T00:00:00Z", "last_run_at": "2026-06-14T02:00:00Z", "last_status": "ok"
+    },
+    {
+      "id": "22c816db969b", "name": "morning-brief", "skill": null,
+      "model": "gpt-4o", "provider": "openai",
+      "schedule": {"kind": "cron", "expr": "0 7 * * *", "display": "daily at 07:00"},
+      "schedule_display": "daily at 07:00", "enabled": true, "state": "scheduled",
+      "created_at": "2026-06-01T00:00:00Z", "last_run_at": "2026-06-14T07:00:00Z", "last_status": "ok"
+    }
+  ]
+}

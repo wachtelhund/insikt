@@ -1,0 +1,10 @@
+{
+  "hosts": {
+    "hermes": {
+      "peerName": "hermes-agent",
+      "aiPeer": "hermes",
+      "workspace": "demo-workspace",
+      "observationMode": "passive"
+    }
+  }
+}

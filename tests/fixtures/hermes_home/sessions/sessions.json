@@ -1,0 +1,26 @@
+{
+  "agent:main:telegram:dm:1000000001": {
+    "platform": "telegram", "display_name": "test-user",
+    "total_tokens": 1000, "estimated_cost_usd": 0.02,
+    "updated_at": "2026-06-14T09:30:00Z",
+    "origin": {"platform": "telegram", "chat_name": "test-user", "chat_type": "dm"}
+  },
+  "agent:main:telegram:dm:1000000002": {
+    "platform": "telegram", "display_name": "test-user",
+    "total_tokens": 800, "estimated_cost_usd": 0.015,
+    "updated_at": "2026-06-14T10:00:00Z",
+    "origin": {"platform": "telegram", "chat_name": "test-user", "chat_type": "dm"}
+  },
+  "agent:main:slack:group:C0FAKE00001:1": {
+    "platform": "slack", "display_name": "channel-a",
+    "total_tokens": 1200, "estimated_cost_usd": 0.03,
+    "updated_at": "2026-06-14T11:05:00Z",
+    "origin": {"platform": "slack", "chat_name": "channel-a", "chat_type": "group"}
+  },
+  "agent:main:slack:group:C0FAKE00002:1": {
+    "platform": "slack", "display_name": "channel-b",
+    "total_tokens": 0, "estimated_cost_usd": 0,
+    "updated_at": "2026-06-14T08:00:00Z",
+    "origin": {"platform": "slack", "chat_name": "channel-b", "chat_type": "group"}
+  }
+}

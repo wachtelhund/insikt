@@ -1,0 +1,15 @@
+{
+  "updated_at": "2026-06-14T12:00:00Z",
+  "platforms": {
+    "slack": [
+      { "id": "C0FAKE00001", "name": "channel-a", "type": "channel" },
+      { "id": "C0FAKE00002", "name": "channel-b", "type": "channel" }
+    ],
+    "telegram": [
+      { "id": "1000000001", "name": "dm", "type": "dm" }
+    ],
+    "discord": [],
+    "whatsapp": [],
+    "matrix": []
+  }
+}

@@ -4,7 +4,7 @@ from insikt.store import Store
 
 def test_query_actions_impl(populated_db):
     res = mcp_server.query_actions_impl(populated_db, window="all")
-    assert res["count"] == 14
+    assert res["count"] == 6
     assert "model_call" in res["by_type"]
 
 

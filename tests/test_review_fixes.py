@@ -16,10 +16,10 @@ NOW = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
 
 # --- #6/#8 secret redaction ----------------------------------------------
 def test_redact_token_shapes():
-    assert "sk-ant-" not in redact_secrets("key = sk-ant-abcdefghijklmnop12345")
-    assert redact_secrets("ghp_0123456789abcdef0123456789abcdef") == "[REDACTED]"
-    out = redact_secrets('API_KEY="supersecretvalue123"')
-    assert "supersecretvalue123" not in out and "API_KEY" in out
+    assert "sk-ant-" not in redact_secrets("key = sk-ant-EXAMPLE-not-a-real-key-000")
+    assert redact_secrets("ghp_EXAMPLEonlyNOTaREALtokenZZZZZZZZ") == "[REDACTED]"
+    out = redact_secrets('API_KEY="EXAMPLE-not-a-real-value-1"')
+    assert "EXAMPLE-not-a-real-value-1" not in out and "API_KEY" in out
 
 
 def test_redact_keeps_normal_text():
@@ -139,9 +139,9 @@ def test_explain_excerpt_is_redacted(tmp_path):
     g = Graph()
     sid = g.node(
         NodeType.SKILL, "hermes", "leaky", label="leaky", name="leaky",
-        body="token = sk-ant-abcdefghijklmnop12345 rest of body",
-        body_excerpt=redact_secrets("token = sk-ant-abcdefghijklmnop12345 rest of body"),
+        body="token = sk-ant-EXAMPLE-not-a-real-key-000 rest of body",
+        body_excerpt=redact_secrets("token = sk-ant-EXAMPLE-not-a-real-key-000 rest of body"),
     )
     detail = explain_node(g, sid)
-    assert "sk-ant-abcdefghijklmnop12345" not in detail.get("body_excerpt", "")
+    assert "sk-ant-EXAMPLE-not-a-real-key-000" not in detail.get("body_excerpt", "")
     assert "body" not in detail["props"]

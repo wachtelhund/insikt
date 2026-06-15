@@ -1,7 +1,7 @@
 #!/bin/sh
 # Insikt installer (README §9.1) — one command, sets everything up.
 #
-#   curl -fsSL https://insikt.dev/install.sh | sh     # (once published)
+#   curl -fsSL https://raw.githubusercontent.com/wachtelhund/insikt/main/install.sh | sh
 #   ./install.sh                                      # from a local clone
 #
 # It: detects OS/arch (incl. Raspberry Pi arm64/armhf), finds a working Python
@@ -40,7 +40,7 @@ if [ -z "${INSIKT_SOURCE:-}" ]; then
   if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ] && grep -q '^name = "insikt"' "$SCRIPT_DIR/pyproject.toml" 2>/dev/null; then
     INSIKT_SOURCE="$SCRIPT_DIR"
   else
-    INSIKT_SOURCE="git+https://github.com/sourceful/insikt.git"
+    INSIKT_SOURCE="git+https://github.com/wachtelhund/insikt.git"
     # In a signed release, fetch the wheel + its checksum here and verify BEFORE install (§9.1).
   fi
 fi

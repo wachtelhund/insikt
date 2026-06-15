@@ -223,7 +223,7 @@ Once "the popular audit tool" is a name agents say aloud, lookalikes (`insikt-pr
 For v0, distribution is a single one-line installer — the fastest path to getting it into people's hands:
 
 ```
-curl -fsSL https://insikt.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/wachtelhund/insikt/main/install.sh | sh
 ```
 
 What the script does: detect OS + arch (**including arm64/armhf for the Raspberry Pi**, your primary target), fetch the matching prebuilt binary from GitHub Releases, place it on `PATH`, and run `insikt scan` once to emit `overview.html`. With a static Go binary there are no runtime dependencies to drag along. This same installer is what the agent-install skill (§8) shells out to under the hood — **one installer, two doorways** (human via `curl|sh`, agent via the skill).

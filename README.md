@@ -12,12 +12,16 @@ values.
 ## Install
 
 ```sh
-curl -fsSL https://insikt.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/wachtelhund/insikt/main/install.sh | sh
 ```
 
 Detects your OS/arch (incl. Raspberry Pi arm64/armhf), installs into an isolated
-environment, puts `insikt` on your `PATH`, and runs a first scan. From a clone
-(until the hosted script is published): `./install.sh`.
+environment, puts `insikt` on your `PATH`, and runs a first scan. Or clone and
+run it directly:
+
+```sh
+git clone https://github.com/wachtelhund/insikt && cd insikt && ./install.sh
+```
 
 ## Update
 

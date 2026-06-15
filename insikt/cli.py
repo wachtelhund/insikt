@@ -294,7 +294,7 @@ def cmd_update(args) -> int:
     if rc != 0:
         print(
             "update failed — re-run the installer instead:\n"
-            "  curl -fsSL https://insikt.dev/install.sh | sh",
+            "  curl -fsSL https://raw.githubusercontent.com/wachtelhund/insikt/main/install.sh | sh",
             file=sys.stderr,
         )
         return rc

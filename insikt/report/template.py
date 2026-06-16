@@ -249,9 +249,13 @@ function activate(id){
      <div class="card"><div class="n">$${esc((c.total_cost||0).toFixed(4))}</div><div class="l">Total spend</div></div>
      <div class="card"><div class="n">${esc(c.total_tokens.toLocaleString())}</div><div class="l">Total tokens</div></div></div>`;
   h+=`<h2>Per model</h2>`;
-  h+= c.models.length?`<table><tr><th>Model</th><th>Provider</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr>`+
-     c.models.map(m=>`<tr><td>${esc(m.model)}</td><td>${esc(m.provider||'')}</td><td>${esc(m.calls)}</td><td>${esc(m.tokens.toLocaleString())}</td><td>$${esc(m.cost.toFixed(4))}</td></tr>`).join("")+`</table>`
-     :`<div class="empty">No model calls recorded.</div>`;
+  const role=m=>[m.default?'<span class="tag self">default</span>':'',
+                 (m.configured&&!m.default)?'<span class="tag">configured</span>':'',
+                 (m.used||m.calls)?'<span class="tag">used</span>':''].join('')||'<span class="muted">—</span>';
+  h+= c.models.length?`<table><tr><th>Model</th><th>Provider</th><th>Role</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr>`+
+     c.models.map(m=>`<tr><td>${esc(m.model)}</td><td>${esc(m.provider||'')}</td><td>${role(m)}</td><td>${esc(m.calls)}</td><td>${esc((m.tokens||0).toLocaleString())}</td><td>$${esc((m.cost||0).toFixed(4))}</td></tr>`).join("")+`</table>`
+     :`<div class="empty">No models configured or used.</div>`;
+  if(c.total_tokens>0 && c.total_cost===0) h+=`<div class="muted">Token volume is recorded but per-call cost isn't — some frameworks don't persist cost. A model shown with 0 calls is configured but had no usage recorded.</div>`;
   h+=`<h2>Per agent</h2>`;
   h+= c.agents.length?`<table><tr><th>Agent</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr>`+
      c.agents.map(a=>`<tr><td>${esc(a.agent)}</td><td>${esc(a.calls)}</td><td>${esc(a.tokens.toLocaleString())}</td><td>$${esc(a.cost.toFixed(4))}</td></tr>`).join("")+`</table>`

@@ -220,11 +220,15 @@ class HygieneEngine:
                     Finding(
                         id=f"stranger:{agent.id}:{c.id}",
                         severity=Severity.MEDIUM,
-                        title="Connector accepts messages from strangers",
-                        detail=f"{agent.label} reachable via {c.label}, which accepts unsolicited messages",
+                        title="Connector has no sender allowlist",
+                        detail=(
+                            f"{agent.label} is reachable via {c.label} with no chat/sender "
+                            "allowlist (no allowed_chats / group_allowed_chats / require_mention) — "
+                            "anyone who can message it can reach the agent"
+                        ),
                         node_id=c.id,
                         agent_id=agent.id,
-                        factors=[f"connector={c.label}", "accepts_strangers"],
+                        factors=[f"connector={c.label}", "no_allowlist"],
                     )
                 )
 

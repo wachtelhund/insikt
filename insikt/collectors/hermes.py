@@ -454,8 +454,11 @@ def _accepts_strangers(platform: str, section: dict) -> bool:
         return False
     if section.get("require_mention") is True or section.get("strict_mention") is True:
         return False
-    # an explicit allow-list of chats/channels narrows exposure
-    for k in ("allowed_chats", "allowed_channels"):
+    # an explicit allow-list of chats/channels narrows exposure. For Hermes
+    # telegram, `group_allowed_chats` is a hard gate (messages outside it are
+    # dropped) and `allowed_chats` whitelists where the bot responds — either,
+    # if set, means it is NOT open to arbitrary senders.
+    for k in ("allowed_chats", "allowed_channels", "group_allowed_chats"):
         v = section.get(k)
         if isinstance(v, str) and v.strip():
             return False

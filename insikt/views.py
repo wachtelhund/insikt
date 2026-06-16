@@ -262,6 +262,25 @@ def cost_ledger(graph: Graph, agent: Optional[str] = None) -> dict:
     total_tokens = 0
     total_cost = 0.0
 
+    # Seed EVERY configured/used model so the model an agent actually runs on
+    # shows up even when no per-call token/cost was recorded (e.g. Hermes
+    # sessions with 0 usage). Without this, the configured default is invisible.
+    if agent_ids is None:
+        seed_models = graph.by_type(NodeType.MODEL)
+    else:
+        seed_models = [m for aid in agent_ids for m in graph.neighbors(aid, Rel.CALLED)]
+    for m in seed_models:
+        per_model.setdefault(
+            m.label,
+            {
+                "model": m.label, "provider": m.props.get("provider"),
+                "calls": 0, "tokens": 0, "cost": 0.0,
+                "default": bool(m.props.get("is_default")),
+                "configured": bool(m.props.get("configured")),
+                "used": bool(m.props.get("used")),
+            },
+        )
+
     for action in graph.actions():
         if action.props.get("type") != "model_call":
             continue
@@ -278,11 +297,13 @@ def cost_ledger(graph: Graph, agent: Optional[str] = None) -> dict:
 
         pm = per_model.setdefault(
             key,
-            {"model": key, "provider": (m.props.get("provider") if m else None), "calls": 0, "tokens": 0, "cost": 0.0},
+            {"model": key, "provider": (m.props.get("provider") if m else None), "calls": 0,
+             "tokens": 0, "cost": 0.0, "default": False, "configured": False, "used": True},
         )
         pm["calls"] += 1
         pm["tokens"] += tokens
         pm["cost"] += cost
+        pm["used"] = True
 
         alabel = _agent_label(graph, aid) or "unknown"
         pa = per_agent.setdefault(alabel, {"agent": alabel, "calls": 0, "tokens": 0, "cost": 0.0})
@@ -293,8 +314,9 @@ def cost_ledger(graph: Graph, agent: Optional[str] = None) -> dict:
     for d in list(per_model.values()) + list(per_agent.values()):
         d["cost"] = round(d["cost"], 6)
 
+    # used / most-expensive first; configured-but-unused models last.
     return {
-        "models": sorted(per_model.values(), key=lambda d: d["cost"], reverse=True),
+        "models": sorted(per_model.values(), key=lambda d: (d["calls"] == 0, -d["cost"], -d["tokens"], d["model"])),
         "agents": sorted(per_agent.values(), key=lambda d: d["cost"], reverse=True),
         "total_tokens": total_tokens,
         "total_cost": round(total_cost, 6),

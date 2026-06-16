@@ -178,3 +178,67 @@ def test_mutating_verbs_all_rejected():
             except urllib.error.HTTPError as e:
                 assert e.code == 405, verb
                 assert json.loads(e.read())["error"] == "read_only"
+
+
+def _post(server, path, payload):
+    req = urllib.request.Request(
+        server.url(path), data=json.dumps(payload).encode(), method="POST",
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return resp.status, json.loads(resp.read())
+
+
+def test_chat_disabled_by_default_is_405():
+    """Chat is opt-in: with no server.chat config, POST /api/chat is rejected."""
+    with _Server(_make_cache()) as srv:
+        req = urllib.request.Request(
+            srv.url("/api/chat"), data=b'{"message":"hi"}', method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("expected HTTP 405")
+        except urllib.error.HTTPError as e:
+            assert e.code == 405
+            assert json.loads(e.read())["error"] == "read_only"
+
+
+def _chat_cache() -> StateCache:
+    # Enable chat with a harmless stub command: `echo <message>` echoes it back.
+    prof = dict(PROFILE)
+    prof["server"] = {"refresh": 5, "chat": {"enabled": True, "cmd": ["echo"], "timeout": 10}}
+    return StateCache(prof)
+
+
+def test_chat_enabled_runs_command_and_returns_reply():
+    with _Server(_chat_cache()) as srv:
+        status, body = _post(srv, "/api/chat", {"message": "ping pong"})
+        assert status == 200
+        assert body["ok"] is True
+        assert body["reply"] == "ping pong"  # echo strips the trailing newline
+
+
+def test_chat_empty_message_is_400():
+    with _Server(_chat_cache()) as srv:
+        req = urllib.request.Request(
+            srv.url("/api/chat"), data=b'{"message":"   "}', method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("expected HTTP 400")
+        except urllib.error.HTTPError as e:
+            assert e.code == 400
+
+
+def test_chat_enabled_other_paths_still_405():
+    """Enabling chat must not open any other mutating route."""
+    with _Server(_chat_cache()) as srv:
+        req = urllib.request.Request(srv.url("/"), data=b"{}", method="POST")
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("expected HTTP 405")
+        except urllib.error.HTTPError as e:
+            assert e.code == 405
+
+    # meta.chat reflects the toggle so the dashboard can show the box.
+    assert _chat_cache().state()["meta"]["chat"] is True
+    assert _make_cache().state()["meta"]["chat"] is False

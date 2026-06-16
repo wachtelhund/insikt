@@ -75,8 +75,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   section.tab{display:none;animation:f .16s ease}
   section.tab.active{display:block}
   @keyframes f{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
-  .stitle{font-size:14px;font-weight:650;color:var(--on);margin:30px 0 14px;display:flex;align-items:center;gap:9px;flex-wrap:wrap;min-width:0;overflow-wrap:anywhere}
-  .stitle:first-child{margin-top:2px}
+  .stitle{font-size:14px;font-weight:650;color:var(--on);margin:32px 0 20px;display:flex;align-items:center;gap:9px;flex-wrap:wrap;min-width:0;overflow-wrap:anywhere}
+  .stitle:first-child{margin-top:4px}
   .stitle .ic{color:var(--on3);width:15px;height:15px}
 
   .grid{display:grid;gap:14px}
@@ -187,6 +187,21 @@ _TEMPLATE = r"""<!DOCTYPE html>
   #glegend .r{display:flex;align-items:center;gap:8px;margin:2px 0}.gsw{width:9px;height:9px;border-radius:50%}
   code{background:var(--sc2);padding:1px 6px;border-radius:6px;font-size:12px;overflow-wrap:anywhere;word-break:break-word}
 
+  /* chat with Hermes */
+  .chat{display:flex;flex-direction:column;gap:12px}
+  .clog{display:flex;flex-direction:column;gap:10px;max-height:54vh;overflow-y:auto;padding:2px}
+  .cempty{color:var(--on3);text-align:center;padding:34px 16px}
+  .cmsg{display:flex}.cmsg.you{justify-content:flex-end}
+  .cmsg .cb{max-width:82%;padding:10px 13px;border-radius:14px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+  .cmsg.you .cb{background:var(--grad);color:#fff;border-bottom-right-radius:4px}
+  .cmsg.hermes .cb{background:var(--sc2);color:var(--on);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .cmsg.pending .cb{color:var(--on3)}
+  .cform{display:flex;gap:9px}
+  .cform input{flex:1;min-width:0;background:var(--sc);color:var(--on);border:1px solid var(--line);border-radius:var(--r3);padding:11px 14px;font-size:14px;min-height:46px}
+  .cform input:focus{outline:none;border-color:var(--primary)}
+  .cform button{background:var(--grad);color:#fff;border:none;border-radius:var(--r3);padding:0 22px;font-weight:600;font-size:14px;cursor:pointer;min-height:46px}
+  .cform button:disabled{opacity:.5;cursor:default}
+
   @media (max-width:560px){
     .wrap{padding:0 15px}
     .hmeta{flex-basis:100%;order:9}
@@ -252,11 +267,11 @@ function gauge(label,valTxt,unit,pct,status){
     `</svg><div class="lab">${esc(label)}</div></div>`;
 }
 function donut(segs,center){segs=segs.filter(s=>s.value>0);const t=segs.reduce((a,s)=>a+s.value,0);
-  const r=54,c=2*Math.PI*r,gap=segs.length>1?c*0.02:0;let off=0,arcs="";
-  if(!t)arcs=`<circle cx="70" cy="70" r="${r}" fill="none" stroke="var(--sc2)" stroke-width="16"/>`;
+  const r=52,c=2*Math.PI*r,gap=segs.length>1?c*0.02:0;let off=0,arcs="";  // geometry matches gauge()
+  if(!t)arcs=`<circle cx="70" cy="70" r="${r}" fill="none" stroke="rgba(126,137,172,.16)" stroke-width="13"/>`;
   segs.forEach(s=>{const seg=s.value/t*c,len=Math.max(.1,seg-gap);
-    arcs+=`<circle cx="70" cy="70" r="${r}" fill="none" stroke="${s.color}" stroke-width="16" ${segs.length>1?'stroke-linecap="round"':''} stroke-dasharray="${len.toFixed(1)} ${(c-len).toFixed(1)}" stroke-dashoffset="${(-off-(segs.length>1?gap/2:0)).toFixed(1)}" transform="rotate(-90 70 70)"/>`;off+=seg;});
-  return `<svg class="donut" viewBox="0 0 140 140" width="132" height="132">${arcs}<text x="70" y="67" text-anchor="middle" class="dn">${fmtN(t)}</text><text x="70" y="84" text-anchor="middle" class="dl">${esc(center||"")}</text></svg>`;}
+    arcs+=`<circle cx="70" cy="70" r="${r}" fill="none" stroke="${s.color}" stroke-width="13" ${segs.length>1?'stroke-linecap="round"':''} stroke-dasharray="${len.toFixed(1)} ${(c-len).toFixed(1)}" stroke-dashoffset="${(-off-(segs.length>1?gap/2:0)).toFixed(1)}" transform="rotate(-90 70 70)"/>`;off+=seg;});
+  return `<svg class="donut" viewBox="0 0 140 140" width="116" height="116">${arcs}<text x="70" y="69" text-anchor="middle" class="dn">${fmtN(t)}</text><text x="70" y="88" text-anchor="middle" class="dl">${esc(center||"")}</text></svg>`;}
 const legend=segs=>{const t=segs.reduce((a,s)=>a+s.value,0)||1;return `<div class="legend">`+segs.filter(s=>s.value>0).map(s=>`<div class="lg"><span class="sw" style="background:${s.color}"></span><span class="lt">${esc(s.label)}</span><span class="lv">${fmtN(s.value)}</span></div>`).join("")+`</div>`;};
 const fmtBytes=b=>{if(b==null)return"—";const u=["B","KB","MB","GB","TB"];let i=0,v=b;while(v>=1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(v<10&&i>0?1:0)+" "+u[i];};
 
@@ -283,13 +298,24 @@ function buildNav(){
 let CURRENT="overview";
 function activate(id){CURRENT=id;
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===id));
-  render();window.scrollTo(0,0);
+  render(true);window.scrollTo(0,0);
   if(id==="hermes")initAgentGraphIfNeeded();
 }
-function render(){
+function render(animate){
   const f={overview:renderOverview,host:renderHost,hermes:renderHermes,honcho:()=>renderSource("honcho"),homeassistant:()=>renderSource("homeassistant")}[CURRENT];
-  $("main").innerHTML=`<section class="tab active">${f?f():""}</section>`;
+  const inner=f?f():"";
+  const sec=$("main").firstElementChild;
+  if(animate||!sec){$("main").innerHTML=`<section class="tab active">${inner}</section>`;}
+  else{sec.innerHTML=inner;}  // in-place on live ticks: no entrance-animation flash
   if(CURRENT==="hermes")wireHermes();
+}
+// reconcile the nav status dots in place (no rebuild) so live ticks don't flicker the navbar
+function updateNavDots(){
+  document.querySelectorAll("#nav button").forEach(b=>{
+    const st=(S()[b.dataset.tab]||{}).status; let dot=b.querySelector(".sd");
+    if(st&&st!=="ok"){if(!dot){dot=document.createElement("span");dot.className="sd";b.insertBefore(dot,b.firstChild);}dot.style.background=STC[st]||"var(--off)";}
+    else if(dot){dot.remove();}
+  });
 }
 
 /* ---------- overview ---------- */
@@ -367,10 +393,35 @@ function renderHermes(){
   if(!s.available)return `<div class="empty">Hermes not found at <code>${esc((s.data||{}).home||"~/.hermes")}</code>. Run <code>insikt configure</code>.</div>`;
   const subs=[["summary","Summary"]];const ag=A();
   if(ag){subs.push(["capability","Capabilities"],["timeline","Timeline"],["cost","Models"],["hygiene","Hygiene"],["graph","Graph"]);}
+  if(LIVE&&DATA.meta&&DATA.meta.chat)subs.push(["chat","Chat"]);
+  if(!subs.some(s=>s[0]===HSUB))HSUB="summary";
   let h=`<div class="subnav">`+subs.map(([k,l])=>`<button class="${k===HSUB?"active":""}" data-sub="${k}">${esc(l)}</button>`).join("")+`</div><div id="hsub">${renderHermesSub()}</div>`;
   return h;
 }
-function wireHermes(){document.querySelectorAll(".subnav button").forEach(b=>b.onclick=()=>{HSUB=b.dataset.sub;document.querySelectorAll(".subnav button").forEach(x=>x.classList.toggle("active",x===b));$("hsub").innerHTML=renderHermesSub();if(HSUB==="graph")initAgentGraph();if(HSUB==="timeline")wireTimeline();});}
+function wireHermes(){document.querySelectorAll(".subnav button").forEach(b=>b.onclick=()=>{HSUB=b.dataset.sub;document.querySelectorAll(".subnav button").forEach(x=>x.classList.toggle("active",x===b));$("hsub").innerHTML=renderHermesSub();if(HSUB==="graph")initAgentGraph();if(HSUB==="timeline")wireTimeline();if(HSUB==="chat")wireChat();});if(HSUB==="chat")wireChat();}
+/* ---------- chat with Hermes (live server only, opt-in) ---------- */
+let CHATLOG=[];
+const chatBubble=m=>`<div class="cmsg ${m.role}${m.pending?" pending":""}"><div class="cb">${esc(m.text)}</div></div>`;
+function renderChat(){
+  return `<div class="chat"><div class="clog" id="clog">${CHATLOG.length?CHATLOG.map(chatBubble).join(""):'<div class="cempty">Ask your Hermes instance anything — replies run on the Pi.</div>'}</div>`+
+    `<form class="cform" id="cform"><input id="cin" placeholder="Message Hermes…" autocomplete="off" maxlength="4000"><button type="submit" id="csend">Send</button></form></div>`;
+}
+function redrawChat(){const c=$("clog");if(c){c.innerHTML=CHATLOG.map(chatBubble).join("");c.scrollTop=c.scrollHeight;}}
+function wireChat(){
+  const form=$("cform");if(!form)return;
+  const inp=$("cin"),btn=$("csend");
+  form.onsubmit=async e=>{e.preventDefault();const msg=(inp.value||"").trim();if(!msg)return;
+    CHATLOG.push({role:"you",text:msg});CHATLOG.push({role:"hermes",text:"thinking…",pending:true});
+    inp.value="";inp.disabled=btn.disabled=true;redrawChat();
+    try{
+      const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:msg})});
+      const d=await r.json().catch(()=>({}));
+      CHATLOG[CHATLOG.length-1]={role:"hermes",text:(d&&(d.reply||d.message||d.error))||"(no reply)"};
+    }catch(err){CHATLOG[CHATLOG.length-1]={role:"hermes",text:"(request failed — is the agent reachable?)"};}
+    inp.disabled=btn.disabled=false;redrawChat();inp.focus();
+  };
+  inp&&inp.focus();
+}
 function renderHermesSub(){
   const s=S().hermes,d=s.data||{},ag=A();
   if(HSUB==="summary"){
@@ -380,6 +431,7 @@ function renderHermesSub(){
     if(meta.length)h+=`<div class="card" style="margin-top:14px"><div class="sm muted">${meta.map(esc).join("  ·  ")}</div></div>`;
     return h;
   }
+  if(HSUB==="chat")return renderChat();
   if(!ag)return `<div class="empty">No agent data.</div>`;
   if(HSUB==="capability")return renderCap(ag.capability);
   if(HSUB==="timeline")return renderTimeline(ag.timeline);
@@ -466,14 +518,13 @@ function startLive(){
     const es=new EventSource("/events");
     es.onmessage=ev=>{try{const m=JSON.parse(ev.data);if(m.host)DATA.sections.system=m.host;if(m.status)DATA.status=m.status;if(m.generated)DATA.meta.generated=m.generated;
       renderBar();
-      // refresh nav status dots + the active host/overview view
-      buildNav();document.querySelector(`#nav button[data-tab="${CURRENT}"]`)?.classList.add("active");
-      if(CURRENT==="overview"||CURRENT==="host")render();
+      updateNavDots();
+      if(CURRENT==="overview"||CURRENT==="host")render(false);  // in-place, no flicker
     }catch(e){}};
   }catch(e){}
 }
 
-renderBar();buildNav();render();startLive();
+renderBar();buildNav();render(true);startLive();
 </script>
 </body>
 </html>"""

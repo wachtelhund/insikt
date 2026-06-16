@@ -55,7 +55,16 @@ DEFAULT_PROFILE: dict = {
         "token_file": "~/.hermes/ha_token.txt",
         "token_env": "HA_TOKEN",
     },
-    "server": {"bind": "0.0.0.0", "port": 8420, "refresh": 5},
+    "server": {
+        "bind": "0.0.0.0",
+        "port": 8420,
+        "refresh": 5,
+        # Opt-in chat box on the Hermes tab. OFF by default so the server stays
+        # strictly read-only; enable it to drive the local agent CLI from the
+        # dashboard. `cmd` is run with the message appended as a single argument
+        # (no shell), e.g. ["hermes", "-z"] -> `hermes -z "<message>"`.
+        "chat": {"enabled": False, "cmd": ["hermes", "-z"], "timeout": 180},
+    },
 }
 
 

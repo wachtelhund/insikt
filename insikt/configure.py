@@ -67,6 +67,9 @@ PROFILE_SCHEMA = {
         "bind": "bind address (default 0.0.0.0 — reachable over the overlay)",
         "port": "TCP port (default 8420)",
         "refresh": "live host-metric refresh seconds (default 5)",
+        "chat": "{enabled,cmd,timeout} — opt-in chat box that runs the local agent "
+        "CLI (default off; the server is read-only otherwise). cmd is run with the "
+        "message appended as one argument, e.g. ['hermes','-z'].",
     },
 }
 

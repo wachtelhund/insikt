@@ -124,10 +124,47 @@ def _make_handler(cache: StateCache):
             else:
                 self._send(404, json.dumps({"error": "not_found"}), "application/json")
 
-        def do_POST(self):
+        def _reject(self):
             self._send(405, json.dumps({"error": "read_only", "message": "Insikt is read-only"}), "application/json")
 
-        do_PUT = do_DELETE = do_PATCH = do_POST
+        do_PUT = do_DELETE = do_PATCH = _reject
+
+        def do_POST(self):
+            path = self.path.split("?", 1)[0]
+            chat = (cache.profile.get("server") or {}).get("chat") or {}
+            if path == "/api/chat" and chat.get("enabled"):
+                return self._chat(chat)
+            self._reject()
+
+        def _chat(self, chat):
+            import subprocess
+
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                n = 0
+            if n <= 0 or n > 16000:
+                return self._send(400, json.dumps({"error": "bad_request"}), "application/json")
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}")
+                msg = str(body.get("message", "")).strip()
+            except (ValueError, AttributeError):
+                return self._send(400, json.dumps({"error": "bad_json"}), "application/json")
+            if not msg:
+                return self._send(400, json.dumps({"error": "empty_message"}), "application/json")
+            msg = msg[:4000]
+            cmd = list(chat.get("cmd") or ["hermes", "-z"])
+            timeout = float(chat.get("timeout", 180))
+            try:
+                # message is passed as a single argv element (no shell) — not interpolated.
+                r = subprocess.run(cmd + [msg], capture_output=True, text=True, timeout=timeout)
+                reply = (r.stdout or "").strip() or (r.stderr or "").strip() or "(no output)"
+                ok = r.returncode == 0
+            except subprocess.TimeoutExpired:
+                reply, ok = f"(agent timed out after {int(timeout)}s)", False
+            except OSError as exc:
+                reply, ok = f"(could not run agent: {exc})", False
+            self._send(200, json.dumps({"reply": reply, "ok": ok}), "application/json")
 
         def _sse(self):
             try:

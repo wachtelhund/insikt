@@ -49,8 +49,10 @@ insikt serve           # binds 0.0.0.0:8420 by default
 
 Leave it running on the Pi and open `http://<pi>:8420` from anywhere on your
 ZeroTier/Tailscale overlay. Host metrics refresh live over Server-Sent Events;
-the heavier sources refresh on a slower cadence. The server is strictly
-read-only — only `GET` is served, everything else returns `405`. Run it under
+the heavier sources refresh on a slower cadence. The server is read-only by
+default — only `GET` is served, everything else returns `405`. (If the Pi runs a
+firewall, allow the port on your overlay interface, e.g.
+`sudo ufw allow in on <zt-iface> to any port 8420 proto tcp`.) Run it under
 systemd to keep it up:
 
 ```ini
@@ -80,6 +82,22 @@ insikt configure --show       # print the effective profile
 The profile is one plain, editable YAML at `~/.insikt/profile.yaml`. A connected
 agent can also author it over the read-only `insikt_describe_layout` MCP tool and
 hand the result to `insikt configure --apply`.
+
+### Chat with your agent (opt-in)
+
+The Hermes tab can include a chat box that talks to your local agent. It's **off
+by default** (so the server stays read-only); enable it in the profile:
+
+```yaml
+server:
+  chat:
+    enabled: true
+    cmd: ["hermes", "-z"]   # your message is appended as one argument (no shell)
+    timeout: 180
+```
+
+This is the only non-`GET` route; the message runs `cmd` on the Pi and returns
+the reply. Only enable it on an overlay you trust.
 
 ## Connect it to your agent
 

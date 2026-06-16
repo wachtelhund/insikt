@@ -68,6 +68,7 @@ def collect_state(
             "host": _platform.node() or "host",
             "model": sections["system"].get("data", {}).get("model"),
             "refresh": (profile.get("server") or {}).get("refresh", 5),
+            "chat": bool(((profile.get("server") or {}).get("chat") or {}).get("enabled")),
         },
         "status": rollup,
         "sections": sections,

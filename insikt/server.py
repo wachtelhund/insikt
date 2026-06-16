@@ -158,8 +158,11 @@ def _make_handler(cache: StateCache):
             try:
                 # message is passed as a single argv element (no shell) — not interpolated.
                 r = subprocess.run(cmd + [msg], capture_output=True, text=True, timeout=timeout)
-                reply = (r.stdout or "").strip() or (r.stderr or "").strip() or "(no output)"
-                ok = r.returncode == 0
+                out = (r.stdout or "").strip()
+                reply = out or (r.stderr or "").strip() or "(no output)"
+                # Some agent CLIs (e.g. `hermes -z`) exit non-zero on teardown even on
+                # success — trust stdout: ok means we got a reply, not the exit code.
+                ok = bool(out)
             except subprocess.TimeoutExpired:
                 reply, ok = f"(agent timed out after {int(timeout)}s)", False
             except OSError as exc:

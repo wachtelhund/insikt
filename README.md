@@ -23,8 +23,10 @@ secret values. Credential key *names* are read; key *material* never is.
 curl -fsSL https://raw.githubusercontent.com/wachtelhund/insikt/main/install.sh | sh
 ```
 
-Detects your OS/arch (incl. Raspberry Pi arm64/armhf), installs into an isolated
-environment, puts `insikt` on your `PATH`, and runs a first scan. Or from a clone:
+Detects your OS/arch (incl. Raspberry Pi arm64/armhf), downloads the latest
+release **wheel** (one ~75 KB pure-Python artifact — no full repo clone),
+installs it into an isolated environment, puts `insikt` on your `PATH`, and runs
+a first scan. `insikt update` pulls the latest release the same way. Or from a clone:
 
 ```sh
 git clone https://github.com/wachtelhund/insikt && cd insikt && ./install.sh

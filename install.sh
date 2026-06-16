@@ -42,10 +42,17 @@ esac
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || echo "")"
 if [ -z "${INSIKT_SOURCE:-}" ]; then
   if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ] && grep -q '^name = "insikt"' "$SCRIPT_DIR/pyproject.toml" 2>/dev/null; then
-    INSIKT_SOURCE="$SCRIPT_DIR"
+    INSIKT_SOURCE="$SCRIPT_DIR"   # running from a local clone
   else
-    INSIKT_SOURCE="git+https://github.com/wachtelhund/insikt.git"
-    # In a signed release, fetch the wheel + its checksum here and verify BEFORE install (§9.1).
+    # Prefer the published release wheel — a single ~75KB download, no full repo clone.
+    # (Pure-Python wheel, so one artifact works on every OS/arch; deps come from PyPI.)
+    WHEEL_URL="$(curl -fsSL "https://api.github.com/repos/wachtelhund/insikt/releases/latest" 2>/dev/null | grep -o 'https://[^"]*\.whl' | head -1 || true)"
+    if [ -n "$WHEEL_URL" ]; then
+      INSIKT_SOURCE="$WHEEL_URL"
+      # In a signed release, fetch the wheel's checksum/signature here and verify BEFORE install (§9.1).
+    else
+      INSIKT_SOURCE="git+https://github.com/wachtelhund/insikt.git"   # no release yet → install from source
+    fi
   fi
 fi
 say "source: $INSIKT_SOURCE"

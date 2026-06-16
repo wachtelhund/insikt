@@ -78,6 +78,31 @@ def cmd_mcp(args) -> int:
     return 0
 
 
+REPO = "wachtelhund/insikt"
+GIT_SOURCE = f"git+https://github.com/{REPO}.git"
+
+
+def _latest_wheel_url(repo: str = REPO) -> Optional[str]:
+    """Resolve the latest GitHub release's wheel asset URL (stdlib; never raises)."""
+    import json
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "insikt"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        for asset in data.get("assets", []):
+            url = asset.get("browser_download_url", "")
+            if url.endswith(".whl"):
+                return url
+    except Exception:
+        return None
+    return None
+
+
 def cmd_update(args) -> int:
     import os
     import shutil
@@ -86,11 +111,16 @@ def cmd_update(args) -> int:
     venv_python = sys.executable
     home = Path(sys.prefix).parent
     marker = home / "source"
-    source = (
-        os.environ.get("INSIKT_SOURCE")
-        or (marker.read_text(encoding="utf-8").strip() if marker.exists() else None)
-        or "insikt"
-    )
+    recorded = marker.read_text(encoding="utf-8").strip() if marker.exists() else None
+    # Prefer: explicit override → a local-clone (dev) install → the latest release
+    # wheel → the recorded source → git. This keeps `insikt update` a small download
+    # (one wheel) for normal installs while still working for dev checkouts.
+    if os.environ.get("INSIKT_SOURCE"):
+        source = os.environ["INSIKT_SOURCE"]
+    elif recorded and Path(recorded).expanduser().is_dir():
+        source = recorded
+    else:
+        source = _latest_wheel_url() or recorded or GIT_SOURCE
     print(f"updating insikt from: {source}")
     if shutil.which("uv"):
         rc = subprocess.call(["uv", "pip", "install", "--python", venv_python, "--reinstall-package", "insikt", source])

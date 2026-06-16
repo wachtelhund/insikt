@@ -1,143 +1,153 @@
 # CLAUDE.md — Insikt
 
 Architecture, patterns, and domain context for working in this repo. The product
-spec lives in [SPEC.md](SPEC.md); read it first. [README.md](README.md) is the
-short install/usage guide. This file is the map of the code that implements it.
+spec lives in [SPEC.md](SPEC.md). [README.md](README.md) is the short install/use
+guide. This file is the map of the code.
 
 ## What this is
 
-A **local-first, read-only auditor** for self-hosted AI agents (Hermes,
-OpenClaw, …). It reads what each agent already persists on disk, normalizes it
-into one graph + action timeline, tracks change over time, flags the dangerous
-bits, and exposes all of it back to the agent as a **read-only MCP toolset** so
-the agent can answer "what did I do?".
+A **local-first, read-only observability dashboard** for a self-hosted AI
+homelab: a Raspberry Pi running **Hermes**, with optional **Honcho** and **Home
+Assistant**. `insikt scan` writes a single offline `overview.html`; `insikt serve`
+runs a live read-only web server (reachable over a ZeroTier/Tailscale overlay).
+The same state is exposed back to the agent as a **read-only MCP toolset**.
 
-Read-only by default. Local-only by default. No secret *values* ever leave the
-agent's own files — Insikt reads key *names*, not material.
+Read-only and local by default. Insikt reports **counts, versions, health and
+metrics** — never coordinates, entity/peer/workspace names, memory contents, or
+secret values. Credential key *names* are read; key *material* never is.
 
-## The one architectural split that matters
+## The architecture that matters
 
 ```
-collectors/   framework-SPECIFIC  (the only place that knows ~/.hermes layout)
-      │  emit
-      ▼
-model.py      normalized Graph (nodes + edges + Action stream)
+collectors/   each data source → ONE Section (system / honcho / homeassistant)
+  base.py       Collector ABC + Section dataclass + status constants (OK/WARN/CRIT/OFF)
+  system.py     Raspberry Pi host metrics (/proc, /sys, vcgencmd)         [always on]
+  honcho.py     Honcho v3 API counts (optional)
+  homeassistant.py  Home Assistant REST version/health/entity counts (optional)
+  hermes.py     HermesGraphScanner → Graph;  build_hermes() → (Section, agent payload)
       │
-store.py      append-only SQLite snapshots + meta-audit
-      │  (framework-AGNOSTIC from here down)
-      ├── views.py        pure derivations (capability surface, timeline, cost, explain)
-      ├── hygiene/        static risk scan + per-agent score
-      ├── report/         self-contained overview.html
-      └── mcp_server.py   read-only MCP tools
+      ▼
+state.py      collect_state(profile) → {meta, status, sections{…}, agent}
+      │        the SINGLE contract read by everything below
+      ├── report/dashboard.py   self-contained offline HTML (render_dashboard)
+      ├── server.py             live read-only web server + StateCache (SSE)
+      └── mcp_server.py         read-only MCP tools
 ```
 
-**New agent support = one new collector. Nothing downstream changes.** If you
-find yourself special-casing a framework outside `collectors/`, that's a bug.
+**A new data source = a new `Collector` subclass emitting a `Section`.** It must
+not raise (use `safe_collect`/status), and it gathers counts/health only. If you
+find a source leaking names/values/coordinates, that's a bug.
 
-`views.py` is the **single source of truth** shared by the HTML report and the
-MCP tools — what a human sees in the timeline is exactly what the agent gets from
-`insikt_query_actions`. Don't compute view data anywhere else.
+**`state.collect_state` is the single source of truth.** The dashboard, the live
+server, and the MCP tools all read the same dict. Don't compute section data
+anywhere else. `fast_only=True` collects just host metrics (the live ticker); a
+full pass adds Hermes + the optional sources.
 
-## Core model (`model.py`)
+## Collector contract (`collectors/base.py`)
 
-- One `Node` type with a `NodeType` discriminator + a `props` dict. One `Edge`
-  type (`src, rel, dst`). One `Graph` container (union-merge, dedup).
-- **Capability surface = the static graph** (what an agent *could* do).
-  **Audit = `Action` nodes** (`type == ACTION`, carry a `ts`) — what it *did*.
-  Keep these distinct; the risk lives in the gap.
-- **IDs are deterministic** (`make_id`, `action_id` content-hash). Same real
-  entity → same id across scans → diffs and idempotent backfill come for free.
-  Never use random ids.
-- Tools are scoped **per skill** (`tool:<kind>:<skill>`) so
-  `Tool—can_access→Resource` attributes reach to the right skill. A shared web
-  tool would conflate every skill's hosts (this was a real bug — keep it fixed).
+- A `Section` is JSON-serializable: `key, title, available, status, summary,
+  data, partial, reasons`. Status ∈ `OK|WARN|CRIT|OFF`.
+- `Collector.safe_collect()` NEVER raises — a dead/absent source becomes
+  `status=off` or a `partial` reason, never an exception that aborts the scan.
+- Optional collectors (`optional=True`, Honcho/HA) are dropped to `off` when not
+  configured/reachable; `state._optional_section` honors `enabled: true|false|auto`.
+- `interval` declares how often the live server should refresh this source
+  (host = 3s fast loop; Hermes/Honcho/HA = slow loop).
 
-## Collector rules (`collectors/`)
+## Hermes (`collectors/hermes.py`)
 
-- **Read-only.** Never write to the agent's files.
-- **Degrade gracefully.** A missing/unreadable path calls `graph.mark_partial(reason)`
-  — it must never raise and abort the scan. The UI/MCP then say "incomplete"
-  rather than silently lying.
-- **Names, not values.** `.env` is parsed for key *names* only → `CredentialRef`
-  nodes. There is a test (`test_hermes_no_secret_values_anywhere`) that fails if
-  fake secret material ever appears in the graph. Keep it passing.
-- Actions reconstructed from logs are tagged `source=backfill` (README §3.4);
-  live capture (future) will be `source=live`.
-- Each collector declares `supported_versions`; the fixtures under
-  `tests/fixtures/` are the golden files for the format it expects.
+`HermesGraphScanner` reads `~/.hermes` into the normalized capability/action
+`Graph` (`model.py`); `build_hermes(profile, now)` runs it + hygiene and returns
+`(section_dict, agent_payload)`. The **agent payload** (`capability`, `timeline`,
+`cost`, `hygiene`, `graph`) is produced by `views.py` and is what the dashboard's
+Hermes sub-tabs and the `insikt_hermes` MCP tool render — compute it nowhere else.
+
+- **Capability surface = the static graph** (what the agent *could* do).
+  **Audit = `Action` nodes** (carry a `ts`) — what it *did*. Risk lives in the gap.
+- **IDs are deterministic** (`make_id`, `action_id` content-hash) → idempotent
+  diffs. Never random ids.
+- Tools are scoped **per skill** (`tool:<kind>:<skill>`) so a skill's reachable
+  hosts don't conflate across skills (this was a real bug — keep it fixed).
+- **Names, not values.** `.env` → `CredentialRef` nodes by key name only. Raw
+  skill `body` text is popped before the payload. The fixture's only secret
+  literal is `FAKE-do-not-use`; `tests/test_hermes_build.py` fails if it ever
+  reaches a Section or the payload. Keep that passing.
 
 ## Hygiene (`hygiene/`)
 
-Static, local, framework-agnostic (operates on the graph, not on paths).
-`rules.py` = detectors; `engine.py` = orchestration + scoring + graph
-annotation. Output is **always a per-agent score with enumerated factors —
-never just a number**. The exfil triad (credential read + network + shell in one
-skill) and the advisory-feed fingerprint match are the CRITICALs. The advisory
-feed (`insikt/data/advisory_feed.json`) is a **sample, unsigned**; production
-must use a signed/pinned feed (README §6, §8.2).
+Static, local, framework-agnostic (operates on the graph). `rules.py` =
+detectors; `engine.py` = orchestration + scoring + graph annotation. Output is
+**always a per-agent score with enumerated factors — never just a number**, and
+each `Finding` carries a `kind` (capability/config/alert) and a `remediation`.
+The exfil triad (credential read + network + shell in one skill) and an
+advisory-feed fingerprint match are the CRITICALs. `insikt/data/advisory_feed.json`
+is a **sample, unsigned**; production needs a signed/pinned feed.
+
+## Dashboard (`report/dashboard.py`)
+
+One offline HTML shell: inline CSS + vanilla-JS canvas graph — **no CDN, no
+network** (Pi-friendly). State is inlined as JSON; `render_dashboard(state, live)`
+toggles the live SSE subscription. Colors come from a fixed brand palette in
+`:root` (navy ramp `#080F25…#FFFFFF`, primary `#6C72FF` w/ a `#C95CFF→#6C72FF`
+gradient, secondaries cyan `#57C3FF` / lavender `#9A91FB` / amber `#FDB52A`;
+status ok=cyan, warn=amber, crit=rose). Any new color must come from this set.
+Anything injected from state is escaped (`</` → `<\/`) so it can't break the
+script tag.
+
+## Live server (`server.py`)
+
+Pure stdlib `ThreadingHTTPServer`. `StateCache` holds the latest state and
+refreshes it with two daemon loops (fast host loop + slow full loop), reusing one
+persistent `SystemCollector` so CPU% deltas are real. Strictly read-only: only
+`GET` (`/`, `/api/state`, `/api/host`, `/healthz`, `/events` SSE) — POST/PUT/etc.
+return `405`. Binds `0.0.0.0` by default for overlay reachability.
 
 ## MCP server (`mcp_server.py`)
 
-Tool logic lives in module-level `*_impl(db_path, …)` functions (directly
-testable); `build_server` wraps them as FastMCP tools. `mcp` is imported lazily
-so `insikt scan` / the report work without the MCP SDK. Every tool logs to the
-meta-audit (README §4.3). All tools are read-only.
+Tool logic lives in module-level `*_impl(profile)` functions (directly testable);
+`build_server` wraps them as FastMCP tools. `mcp` is imported lazily so `scan` /
+`serve` work without the SDK. Tools: `insikt_system_state`, `insikt_host`,
+`insikt_hermes(view)`, `insikt_source(name)`, `insikt_describe_layout`,
+`insikt_self_report`. All read-only and live (no DB).
 
-## Report (`report/`)
+## Profile (`profiles.py`) & configure (`configure.py`)
 
-`template.py` is a single offline HTML shell (inline CSS + vanilla-JS canvas
-graph — **no CDN, no network**, Pi-friendly). Data is inlined as JSON.
-`builder.py` assembles the payload from `views.py`. Skill bodies are stripped
-from the graph payload (keep the file small; never embed secret-adjacent text).
+One profile describes the whole homelab: `system` (thresholds), `hermes` (home +
+layout overrides), `honcho`, `homeassistant`, `server`. `DEFAULT_PROFILE` fits the
+standard stack so `scan`/`serve` work with zero config; a user/agent override goes
+at `~/.insikt/profile.yaml` (deep per-section merge). `configure.py` is the
+AI-first flow: `--describe` (redacted layout digest + schema), `--agent` (drive
+`hermes -z` / `claude -p` to author it), `--apply FILE`, `--auto`, or a default
+propose-and-save. It validates by actually running `collect_state`.
 
 ## Conventions
 
-- Python ≥ 3.10. Runtime deps: `pyyaml`, `mcp`. Keep deps minimal — this is a
-  security tool; fewer deps = more auditable.
-- Prefer the standard library. `store.py` is pure stdlib on purpose.
-- Pure functions in `views.py`/`hygiene` take a `now` where time matters, so
-  tests are deterministic.
+- Python ≥ 3.10. Runtime deps: `pyyaml`, `mcp` only — fewer deps = more auditable.
+- Prefer the standard library. Pure functions in `views.py`/`hygiene` take a
+  `now` where time matters, so tests are deterministic.
+- Collectors gather **counts/versions/health/metrics**, never identifying data.
 
 ## Running & testing
 
 ```sh
 uv venv --python 3.13 .venv && uv pip install --python .venv/bin/python -e . pytest
-.venv/bin/python -m pytest                       # 67 tests, ~1s
+.venv/bin/python -m pytest                                   # full suite, ~seconds
 .venv/bin/insikt scan --hermes-home tests/fixtures/hermes_home --out overview.html
-.venv/bin/insikt mcp --db ~/.insikt/insikt.db    # read-only MCP server (stdio)
+.venv/bin/insikt serve                                       # live dashboard on :8420
+.venv/bin/insikt mcp                                         # read-only MCP (stdio)
 ```
 
 (Homebrew's Python 3.14 has a broken `pyexpat`; use 3.13 via `uv` as above.)
 
-When you change collector output or views, re-run the scan against the fixtures
-and eyeball `overview.html` — visual output beats raw data for catching
-regressions (the per-skill-reach bug was caught this way, not by a unit test).
-
-## Collectors & profiles
-
-Three collectors, each profile-driven (`insikt/profiles.py`; override at
-`~/.insikt/profiles/<fw>.yaml`):
-
-- **`collectors/hermes.py`** — validated against a live `~/.hermes`.
-- **`collectors/claude_code.py`** — validated against a live `~/.claude`
-  (commands/agents/skills, `settings.json` permission posture, MCP servers,
-  `projects/**/*.jsonl` tool-use + model usage; session parse is bounded by
-  `max_session_files`/`max_actions`).
-- **`collectors/openclaw.py`** — best-effort, **not** validated against a real
-  install (the fixture is invented). Treat with suspicion until verified.
-
-`insikt configure` (`configure.py`) proposes/validates/applies a profile and can
-drive the agent's own CLI (`AGENT_CLI`: `hermes -z`, `claude -p`) to author one.
-Adding a framework = a collector + a `BUILTINS` profile + entries in
-`FRAMEWORK_MARKERS`, `validate_profile`, the `COLLECTORS` exports, and
-`cli._build_collectors`; optionally an `AGENT_CLI` driver and `_scan_posture`
-checks.
+When you change collector output or the dashboard, re-render against the fixtures
+and **eyeball the HTML** — visual output beats raw data for catching regressions
+(the per-skill-reach and gauge-threshold bugs were both caught this way).
 
 ## Status / what's deferred
 
-Built: v0 (collectors → snapshot store → overview.html) **plus** the read-only
-MCP server (v1 core), the static hygiene engine (v2 core), and agent-assisted
-`insikt configure`. Deferred and kept pluggable: live-capture hooks (§10.1),
-Honcho introspection, the live web-UI server, signed/reproducible releases, the
-generic profile interpreter (for frameworks with no collector), and the
-Scanopy/Homelable overlay (v3+).
+Built: section collectors (system/honcho/HA + Hermes), `collect_state`, the
+offline dashboard, the live read-only server, the static hygiene engine, the
+read-only MCP server, and agent-assisted `insikt configure`. Deferred and kept
+pluggable: live-capture hooks, signed/reproducible releases, a generic profile
+interpreter for sources with no collector, and the Scanopy/Homelable network
+overlay.

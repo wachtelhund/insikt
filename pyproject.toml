@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "insikt"
 version = "0.0.1"
-description = "Local-first, read-only auditor that makes a self-hosted AI agent's capabilities, actions, model usage, and risk surface legible — and exposes it back to the agent as a read-only MCP toolset."
+description = "Local-first, read-only observability dashboard for a self-hosted AI homelab — Raspberry Pi host metrics, a Hermes agent's capabilities/actions/cost/risk, and optional Honcho + Home Assistant — in one offline page or a live web server, also exposed back to the agent as a read-only MCP toolset."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Sourceful" }]
-keywords = ["mcp", "ai-agents", "audit", "observability", "security", "hermes", "openclaw"]
+keywords = ["mcp", "ai-agents", "observability", "dashboard", "homelab", "raspberry-pi", "security", "hermes", "home-assistant", "honcho"]
 dependencies = [
     "pyyaml>=6",
     "mcp>=1.2",

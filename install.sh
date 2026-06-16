@@ -97,14 +97,15 @@ else ok "installed $NEW → $BIN_DIR/insikt"; fi
 
 # --- 5. first run ---------------------------------------------------------
 say "running first scan…"
-"$VENV/bin/insikt" scan || say "no agent state found yet — run 'insikt scan' once an agent (Hermes/OpenClaw) is set up"
+"$VENV/bin/insikt" scan || say "nothing to scan yet — run 'insikt scan' once Hermes is set up on this host"
 
 echo
 ok "done"
 case ":$PATH:" in *":$BIN_DIR:"*) :;; *) say "add this to your shell profile:  export PATH=\"$BIN_DIR:\$PATH\"";; esac
 cat <<EOF
 
-  insikt scan        refresh the snapshot + overview.html
+  insikt scan        one-shot snapshot + overview.html
+  insikt serve       live read-only dashboard (reach it over your overlay)
   insikt mcp         run the read-only MCP server for your agent
   insikt --help
 

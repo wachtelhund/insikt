@@ -1,25 +1,21 @@
 # Insikt
 
-A local-first, read-only auditor for self-hosted AI agents. It reads what an
-agent (Hermes, Claude Code, OpenClaw, …) already writes to disk, normalizes it
-into one graph plus an action timeline, flags the risky parts, and exposes the
-result back to the agent as a read-only MCP toolset — so it can answer *"what did
-I do yesterday?"* about itself.
+A local-first, read-only **observability dashboard for a self-hosted AI homelab**.
+One offline page (or a live web server) that shows, in real time:
 
-Read-only and local by default. It reads credential key **names**, never their
-values.
+- **Host** — Raspberry Pi temperature, CPU, memory, disk, load, uptime, and
+  under-voltage/throttle history.
+- **Hermes** — your agent's capabilities, action timeline, model spend, a hygiene
+  report, and a capability graph (what each skill can reach).
+- **Honcho** *(optional)* — workspace / peer / session counts and queue status.
+- **Home Assistant** *(optional)* — version, run state, component and per-domain
+  entity counts.
 
-## Supported agents
+Read-only and local by default. Insikt reports **counts, versions, health and
+metrics** — never coordinates, entity names, peer names, memory contents, or
+secret values. Credential key *names* are read; key *material* never is.
 
-| Agent | Reads | Status |
-|---|---|---|
-| **Hermes** (`~/.hermes`) | config, skills, connectors, cron, sessions/cost, memory, Honcho | ✅ validated against a live install |
-| **Claude Code** (`~/.claude`) | settings + permission posture, commands/agents/skills, MCP servers, session tool-use + model usage | ✅ validated against a live install |
-| **OpenClaw** (`~/.openclaw`) | config, connectors, skills, usage | ⚠️ best-effort — not yet validated against a real install |
-
-Each collector is **profile-driven**: paths/field-names live in an editable
-profile, so version/layout drift is fixed by `insikt configure` (below) — no code
-change. A new framework needs one collector, or an agent-authored profile.
+![Overview](docs/overview.png)
 
 ## Install
 
@@ -28,75 +24,95 @@ curl -fsSL https://raw.githubusercontent.com/wachtelhund/insikt/main/install.sh 
 ```
 
 Detects your OS/arch (incl. Raspberry Pi arm64/armhf), installs into an isolated
-environment, puts `insikt` on your `PATH`, and runs a first scan. Or clone and
-run it directly:
+environment, puts `insikt` on your `PATH`, and runs a first scan. Or from a clone:
 
 ```sh
 git clone https://github.com/wachtelhund/insikt && cd insikt && ./install.sh
 ```
 
-## Update
-
-```sh
-insikt update          # re-installs the latest from the recorded source
-```
-
-Or just re-run the install command — it's idempotent and rebuilds the
-environment from the latest release. (Once releases are signed and packaged, the
-norm becomes the OS package manager: `brew upgrade insikt` / `apt upgrade` with
-pinned versions — see [`SPEC.md`](SPEC.md) §8.)
-
 ## Use
 
 ```sh
-insikt scan            # snapshot the agent(s) and write overview.html
+insikt scan            # one-shot snapshot -> overview.html (a single offline file)
+insikt serve           # live read-only dashboard web server (real-time host metrics)
+insikt configure       # adapt Insikt to your setup (AI-first; see below)
 insikt mcp             # read-only MCP server (stdio) for your agent
-insikt configure       # adapt the collector to your setup (see below)
-insikt diff            # what changed since the last scan
-insikt snapshots       # snapshot history
-insikt queries         # the meta-audit log (queries made to Insikt)
+insikt update          # update to the latest release
 insikt --help
 ```
 
-Open `overview.html` for the force-directed graph, capability surface, action
-timeline, model-cost ledger, hygiene report, and diff — a single offline file.
-
-## Configure (when your layout differs)
-
-The built-in profiles fit a standard install. If yours differs, `insikt
-configure` adapts it — AI-first:
+### Serve it on the Pi, reach it over your overlay
 
 ```sh
-insikt configure       # "Use your agent to find the optimal configuration? [Y/n]"
+insikt serve           # binds 0.0.0.0:8420 by default
 ```
 
-- **Yes** → Insikt drives your agent's own CLI (`hermes -z`, `claude -p`) to
-  author a profile from a secret-redacted layout digest, validates it, and saves
-  it on your confirmation. The agent knows its filesystem; Insikt validates and
-  applies.
-- **No / `--auto`** → a heuristic autodetect proposal instead.
+Leave it running on the Pi and open `http://<pi>:8420` from anywhere on your
+ZeroTier/Tailscale overlay. Host metrics refresh live over Server-Sent Events;
+the heavier sources refresh on a slower cadence. The server is strictly
+read-only — only `GET` is served, everything else returns `405`. Run it under
+systemd to keep it up:
 
-Profiles are plain, editable YAML at `~/.insikt/profiles/<framework>.yaml`. A
-connected agent can also do this over the read-only `insikt_describe_layout` MCP
-tool plus `insikt configure --apply`.
+```ini
+# /etc/systemd/system/insikt.service
+[Service]
+ExecStart=%h/.local/bin/insikt serve
+Restart=always
+[Install]
+WantedBy=default.target
+```
+
+## Configure (when your setup differs)
+
+The built-in defaults fit the standard "Hermes on a Raspberry Pi (+ optional
+Honcho + Home Assistant)" stack, so `scan`/`serve` work with zero config. If your
+layout differs (a non-standard Hermes home, different Honcho/HA URLs, a token in
+another place), `insikt configure` adapts it — AI-first:
+
+```sh
+insikt configure              # propose a profile for this host, show what it surfaces, save on y/N
+insikt configure --agent      # let your agent (hermes -z / claude -p) author the profile
+insikt configure --describe   # emit a secret-redacted layout digest + schema (for an agent)
+insikt configure --apply FILE # validate a profile file and save it
+insikt configure --show       # print the effective profile
+```
+
+The profile is one plain, editable YAML at `~/.insikt/profile.yaml`. A connected
+agent can also author it over the read-only `insikt_describe_layout` MCP tool and
+hand the result to `insikt configure --apply`.
 
 ## Connect it to your agent
 
 ```sh
-hermes mcp add insikt --command "insikt mcp"
+hermes mcp add insikt --command "insikt mcp"      # Hermes
+claude mcp add insikt -- insikt mcp               # Claude Code
 ```
 
-The agent gains read-only tools — `insikt_query_actions`,
-`insikt_capability_surface`, `insikt_risk_report`, `insikt_diff`,
-`insikt_explain`, `insikt_self_report`, and `insikt_describe_layout` — and
-reaches for them when asked introspection questions. (Claude Code:
-`claude mcp add insikt -- insikt mcp`.)
+The agent gains read-only tools and reaches for them when asked introspection
+questions:
+
+| Tool | Answers |
+|---|---|
+| `insikt_system_state` | "How's everything doing?" — overall + every section |
+| `insikt_host` | Pi temperature, CPU, memory, disk, throttle history |
+| `insikt_hermes` | capability / timeline / cost / hygiene / graph |
+| `insikt_source` | a Honcho / Home Assistant section |
+| `insikt_describe_layout` | a redacted digest so the agent can author its own profile |
+| `insikt_self_report` | Insikt's version + exact permissions |
+
+## What it looks like
+
+| Hygiene | Capability graph |
+|---|---|
+| ![Hygiene](docs/hygiene.png) | ![Graph](docs/graph.png) |
 
 ## Docs
 
-- [`SPEC.md`](SPEC.md) — the full design spec: data model, collectors, MCP
-  interface, hygiene scanning, architecture, and roadmap.
+- [`SPEC.md`](SPEC.md) — design: data model, collectors, the dashboard, the MCP
+  interface, hygiene scanning, and roadmap.
 - [`CLAUDE.md`](CLAUDE.md) — code map and how to run the tests.
 
-Built in Python. v0 is unsigned; the signed/reproducible-release integrity path
-is in [`SPEC.md`](SPEC.md) §8–§9.
+Built in Python (stdlib + `pyyaml` + `mcp`). v0 is unsigned; the
+signed/reproducible-release path is in [`SPEC.md`](SPEC.md). `curl | sh` is the
+exact pattern Insikt's own hygiene scanner flags — fine as a v0 expedient while
+you control the endpoint; serve over HTTPS and verify a checksum as you grow.

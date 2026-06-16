@@ -167,6 +167,21 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .hist .hv{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
   .hist .hr{color:var(--on3);font-size:11.5px;font-variant-numeric:tabular-nums}
   .spark{width:100%;height:88px;display:block;margin-top:10px}
+  .hint{color:var(--on3);font-size:12px;font-weight:400;margin-left:4px}
+  .card.hist.clickable{cursor:pointer;transition:border-color .14s,transform .14s}
+  .card.hist.clickable:hover{border-color:rgba(108,114,255,.5);transform:translateY(-1px)}
+
+  /* metric detail modal */
+  .modal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:20px}
+  .modal[hidden]{display:none}
+  .mbg{position:absolute;inset:0;background:rgba(8,15,37,.72);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+  .sheet{position:relative;background:var(--sc);border:1px solid var(--line);border-radius:var(--r);padding:var(--pad);width:min(720px,100%);max-height:88vh;overflow:auto;box-shadow:0 24px 60px rgba(0,0,0,.5);animation:pop .18s ease}
+  @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.99)}to{opacity:1;transform:none}}
+  .shead{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px}
+  .shead .st{font-weight:680;font-size:15px;display:flex;align-items:center;gap:8px}
+  .mx{flex:0 0 auto;background:var(--sc2);border:none;color:var(--on2);width:32px;height:32px;border-radius:9px;cursor:pointer;font-size:14px}
+  .mx:hover{color:var(--on);background:var(--sc3)}
+  .bigchart .spark{height:230px;margin:0 0 16px}
 
   /* timeline + table + graph (Hermes subviews) */
   .ev{display:flex;gap:14px;padding:13px 0}
@@ -238,6 +253,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <nav><div class="wrap" id="nav"></div></nav>
 </div>
 <main class="wrap" id="main"></main>
+<div id="modal" class="modal" hidden><div class="mbg" onclick="closeModal()"></div><div class="sheet" id="sheet"></div></div>
 
 <script id="d" type="application/json">__DATA__</script>
 <script>
@@ -354,27 +370,49 @@ function updateHostLive(){
     const gv=el.querySelector(".gv");if(gv)gv.textContent=x.val;
   });
 }
-/* ---------- area/line history charts ---------- */
+/* ---------- area/line history charts (animated, clickable) ---------- */
 let HIST=(DATA.history||[]).slice();
+const CW=600,CH=88,CPAD=6;
+function _cpts(vals){const mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1,n=vals.length;
+  return vals.map((v,i)=>({x:CPAD+(n>1?i/(n-1):0)*(CW-2*CPAD),y:CPAD+(1-(v-mn)/rng)*(CH-2*CPAD)}));}
+function _ptsStr(p){return p.map(q=>q.x.toFixed(1)+","+q.y.toFixed(1)).join(" ");}
+function _applyChart(id,pts){const ln=document.getElementById(id+"_l"),ar=document.getElementById(id+"_a");
+  if(!ln&&!ar)return false;const line=_ptsStr(pts);
+  if(ln)ln.setAttribute("points",line);
+  if(ar)ar.setAttribute("points",`${CPAD},${CH-CPAD} ${line} ${CW-CPAD},${CH-CPAD}`);return true;}
+const CHARTPTS={};  // id -> currently-rendered points (tween baseline)
+function tweenChart(id,target){
+  let from=CHARTPTS[id];
+  if(!from){CHARTPTS[id]=target;_applyChart(id,target);return;}
+  if(from.length!==target.length){  // align lengths to the newest end so the line "grows in"
+    from = from.length<target.length
+      ? Array.from({length:target.length-from.length},()=>from[0]).concat(from)
+      : from.slice(from.length-target.length);
+  }
+  const start=performance.now(),dur=480,f0=from;
+  (function fr(t){const e=Math.min(1,(t-start)/dur),k=e<.5?2*e*e:1-Math.pow(-2*e+2,2)/2;
+    const pts=target.map((p,i)=>({x:f0[i].x+(p.x-f0[i].x)*k,y:f0[i].y+(p.y-f0[i].y)*k}));
+    if(!_applyChart(id,pts))return;
+    if(e<1)requestAnimationFrame(fr);else CHARTPTS[id]=target;})(performance.now());
+}
 function areaChart(id,vals,color){
   if(!vals||vals.length<2)return `<div class="muted" style="font-size:12.5px;padding:18px 0">collecting…</div>`;
-  const w=600,h=88,pad=6,mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1,n=vals.length;
-  const X=i=>pad+(i/(n-1))*(w-2*pad),Y=v=>pad+(1-(v-mn)/rng)*(h-2*pad);
-  const line=vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
-  const area=`${pad},${(h-pad).toFixed(1)} ${line} ${(w-pad).toFixed(1)},${(h-pad).toFixed(1)}`;
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">`+
+  const pts=_cpts(vals),line=_ptsStr(pts);
+  if(id.indexOf("ar_")===0)CHARTPTS[id]=pts;  // seed tween baseline for the inline host charts
+  return `<svg class="spark" viewBox="0 0 ${CW} ${CH}" preserveAspectRatio="none">`+
     `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".34"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>`+
-    `<polygon id="${id}_a" points="${area}" fill="url(#${id})"/>`+
+    `<polygon id="${id}_a" points="${CPAD},${CH-CPAD} ${line} ${CW-CPAD},${CH-CPAD}" fill="url(#${id})"/>`+
     `<polyline id="${id}_l" points="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
 }
 const HSERIES=[["temp","Temp","°C","#FDB52A",1],["cpu","CPU","%","#6C72FF",0],["mem","Memory","%","#57C3FF",0]];
+const _vals=k=>HIST.map(s=>s[k]).filter(v=>v!=null);
 function hostHistory(){
   if(!HIST||HIST.length<2)return "";
-  let h=`<div class="stitle">${ic("chart")} History</div><div class="grid g-cards">`;
+  let h=`<div class="stitle">${ic("chart")} History <span class="hint">tap a chart for detail</span></div><div class="grid g-cards">`;
   HSERIES.forEach(([k,label,unit,color,dp])=>{
-    const vals=HIST.map(s=>s[k]).filter(v=>v!=null);if(vals.length<2)return;
+    const vals=_vals(k);if(vals.length<2)return;
     const cur=vals[vals.length-1],mn=Math.min(...vals),mx=Math.max(...vals);
-    h+=`<div class="card hist"><div class="hh"><span class="ht">${label}</span><span class="hv num">${cur.toFixed(dp)}${unit}</span></div>`+
+    h+=`<div class="card hist clickable" data-k="${k}" onclick="openMetric('${k}')"><div class="hh"><span class="ht">${label}</span><span class="hv num">${cur.toFixed(dp)}${unit}</span></div>`+
        areaChart("ar_"+k,vals,color)+
        `<div class="hr">min ${mn.toFixed(dp)}${unit} · max ${mx.toFixed(dp)}${unit} · ${vals.length} samples</div></div>`;
   });
@@ -382,17 +420,36 @@ function hostHistory(){
 }
 function updateHistCharts(){
   HSERIES.forEach(([k,label,unit,color,dp])=>{
-    const vals=HIST.map(s=>s[k]).filter(v=>v!=null);if(vals.length<2)return;
-    const w=600,h=88,pad=6,mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1,n=vals.length;
-    const X=i=>pad+(i/(n-1))*(w-2*pad),Y=v=>pad+(1-(v-mn)/rng)*(h-2*pad);
-    const line=vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
-    const ln=document.getElementById("ar_"+k+"_l"),ar=document.getElementById("ar_"+k+"_a");
-    if(ln)ln.setAttribute("points",line);
-    if(ar)ar.setAttribute("points",`${pad},${(h-pad).toFixed(1)} ${line} ${(w-pad).toFixed(1)},${(h-pad).toFixed(1)}`);
-    const card=ln&&ln.closest(".hist");if(card){const hv=card.querySelector(".hv"),hr=card.querySelector(".hr");
+    const vals=_vals(k);if(vals.length<2)return;
+    tweenChart("ar_"+k,_cpts(vals));
+    const card=document.querySelector(`.hist[data-k="${k}"]`);
+    if(card){const mn=Math.min(...vals),mx=Math.max(...vals),hv=card.querySelector(".hv"),hr=card.querySelector(".hr");
       if(hv)hv.textContent=vals[vals.length-1].toFixed(dp)+unit;
       if(hr)hr.textContent=`min ${mn.toFixed(dp)}${unit} · max ${mx.toFixed(dp)}${unit} · ${vals.length} samples`;}
   });
+  if(OPENM)refreshModal();
+}
+/* ---------- metric detail modal ---------- */
+let OPENM=null;
+function openMetric(k){const m=HSERIES.find(s=>s[0]===k);if(!m)return;OPENM=k;
+  $("sheet").innerHTML=metricSheet(m);$("modal").hidden=false;document.body.style.overflow="hidden";}
+function closeModal(){OPENM=null;$("modal").hidden=true;document.body.style.overflow="";}
+function metricSheet(m){
+  const [k,label,unit,color,dp]=m,vals=_vals(k);
+  const head=`<div class="shead"><span class="st">${ic("chart")} ${esc(label)} — history</span><button class="mx" onclick="closeModal()" aria-label="Close">✕</button></div>`;
+  if(vals.length<2)return head+`<div class="empty">Not enough history yet — give it a moment.</div>`;
+  const cur=vals[vals.length-1],mn=Math.min(...vals),mx=Math.max(...vals),avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+  const tiles=[["Current",cur],["Min",mn],["Max",mx],["Average",avg]];
+  return head+`<div class="bigchart">${areaChart("mar_"+k,vals,color)}</div>`+
+    `<div class="grid g-stats">`+tiles.map(([l,v])=>`<div class="stat"><div class="n num" style="color:${color}">${v.toFixed(dp)}${esc(unit)}</div><div class="l">${esc(l)}</div></div>`).join("")+
+    `<div class="stat"><div class="n num">${vals.length}</div><div class="l">Samples</div></div></div>`;
+}
+function refreshModal(){if(!OPENM)return;const m=HSERIES.find(s=>s[0]===OPENM);if(!m)return;
+  const [k,label,unit,color,dp]=m,vals=_vals(k);if(vals.length<2)return;
+  _applyChart("mar_"+k,_cpts(vals));
+  const ns=$("sheet")?$("sheet").querySelectorAll(".g-stats .stat .n"):[];
+  if(ns.length>=5){const cur=vals[vals.length-1],mn=Math.min(...vals),mx=Math.max(...vals),avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+    [cur,mn,mx,avg].forEach((v,i)=>ns[i].textContent=v.toFixed(dp)+unit);ns[4].textContent=vals.length;}
 }
 function renderOverview(){
   // Sources — every section (Host included) as a clickable status card.
@@ -616,6 +673,7 @@ function startLive(){
   }catch(e){}
 }
 
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&OPENM)closeModal();});
 renderBar();buildNav();render(true);startLive();
 </script>
 </body>

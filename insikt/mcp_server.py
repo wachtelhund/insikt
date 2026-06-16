@@ -1,197 +1,140 @@
-"""The agent-facing MCP server (README §4).
+"""The agent-facing MCP server — read-only, live whole-system state.
 
-Insikt runs as a **local, read-only** MCP server. Once registered, a target agent
-(Hermes, OpenClaw, Claude Code, …) simply *has* these tools and reaches for them
-when the user asks an introspection question — no bespoke per-framework glue.
+Insikt runs as a **local, read-only** MCP server. Once registered, an agent
+(Hermes, Claude Code, …) simply *has* these tools and reaches for them when the
+user asks an introspection question ("what's the Pi running at?", "what can you
+do?", "what changed?") — no bespoke per-framework glue.
 
 Every tool:
 
-* reads the latest persisted snapshot (read-only — it never mutates the audit),
+* reads **live** state by running the collectors (``collect_state``) — there is no
+  database; the answer is always current,
 * returns **structured data, not prose** (the agent phrases the reply), and
-* is logged to the append-only meta-audit so "the agent asked itself what it did"
-  is itself recorded (README §4.3).
+* is strictly read-only — it never mutates the host or the agent.
 
-The tool logic lives in module-level ``*_impl`` functions (directly testable and
-framework-agnostic); ``build_server`` wraps them as FastMCP tools. ``mcp`` is
-imported lazily so the core (``insikt scan`` / the HTML report) works even where
-the MCP SDK is absent.
+Tool logic lives in module-level ``*_impl`` functions (directly testable);
+``build_server`` wraps them as FastMCP tools. ``mcp`` is imported lazily so the
+core (``insikt scan`` / ``serve``) works even where the MCP SDK is absent.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from .hygiene import HygieneEngine
-from .store import Store
-from .views import (
-    capability_surface,
-    cost_ledger,
-    explain_node,
-    query_actions,
-    resolve_agents,
-)
-
-DEFAULT_DB = "~/.insikt/insikt.db"
-
-_NO_SNAPSHOT = {
-    "error": "no_snapshot",
-    "message": "No audit snapshot found yet. Run `insikt scan` first (or let the "
-    "install backfill run) so there is data to query.",
-}
+from .profiles import load_profile
+from .state import collect_state
 
 # Exact, declared permissions — surfaced verbatim by insikt_self_report so the
-# agent can prove the tool to the user before/after install (README §8.2/§8.3).
+# agent can prove the tool to the user before/after install.
 PERMISSIONS = {
     "mode": "read-only",
+    "writes_to_host": False,
     "writes_to_agent": False,
     "reads_secret_values": False,
-    "network_egress": False,
+    "internet_egress": False,
     "shell_exec": False,
-    "bind": "loopback only",
     "reads": [
-        "~/.hermes/{config.yaml,.env(names only),skills,mcp,sessions,memory} (read-only)",
-        "~/.openclaw/{openclaw.json,credentials(presence only),skills,usage.jsonl} (read-only)",
-        "~/.insikt/insikt.db (its own append-only snapshot + meta-audit store)",
+        "host metrics via /proc, /sys, vcgencmd (Raspberry Pi temperature/throttle)",
+        "~/.hermes/{config.yaml, .env (KEY NAMES only), skills, sessions, memory} (read-only)",
+        "local Honcho v3 API (counts only) and Home Assistant REST API (version/health/entity counts)",
     ],
+    "network": "loopback HTTP to local Honcho / Home Assistant only — no internet egress",
 }
+
+# Views available on the Hermes agent-audit payload.
+_HERMES_VIEWS = ("summary", "capability", "timeline", "cost", "hygiene", "graph", "all")
+
+
+def _state(profile: Optional[dict] = None) -> dict:
+    return collect_state(profile or load_profile())
+
+
+def _trim_section(sec: dict) -> dict:
+    return {
+        "status": sec.get("status"),
+        "available": sec.get("available"),
+        "summary": sec.get("summary"),
+        "partial": sec.get("partial", False),
+        "data": sec.get("data", {}),
+    }
 
 
 # --- tool implementations (directly testable) -----------------------------
-def query_actions_impl(db_path, window="yesterday", agent=None, type=None) -> dict:
-    with Store(db_path) as store:
-        store.log_query("insikt_query_actions", {"window": window, "agent": agent, "type": type}, agent)
-        sid = store.latest_snapshot_id()
-        if sid is None:
-            return dict(_NO_SNAPSHOT)
-        graph = store.load_graph(sid)
-        try:
-            return query_actions(graph, window=window, type=type, agent=agent)
-        except ValueError as exc:
-            return {"error": "bad_window", "message": str(exc)}
+def system_state_impl(profile: Optional[dict] = None) -> dict:
+    """The whole-system rollup: overall status + every section's status/summary/
+    metrics. Token-light — the heavy Hermes agent-audit payload is omitted (use
+    ``insikt_hermes`` for that)."""
+    st = _state(profile)
+    return {
+        "meta": st["meta"],
+        "status": st["status"],
+        "sections": {k: _trim_section(v) for k, v in st["sections"].items()},
+    }
 
 
-def capability_surface_impl(db_path, agent=None) -> dict:
-    with Store(db_path) as store:
-        store.log_query("insikt_capability_surface", {"agent": agent}, agent)
-        sid = store.latest_snapshot_id()
-        if sid is None:
-            return dict(_NO_SNAPSHOT)
-        return capability_surface(store.load_graph(sid), agent=agent)
+def host_impl(profile: Optional[dict] = None) -> dict:
+    """Raspberry Pi / host metrics: temperature, CPU%, memory, disk, load,
+    uptime, and throttle/under-voltage history."""
+    return _trim_section(_state(profile)["sections"].get("system", {}))
 
 
-def risk_report_impl(db_path, agent=None) -> dict:
-    with Store(db_path) as store:
-        store.log_query("insikt_risk_report", {"agent": agent}, agent)
-        sid = store.latest_snapshot_id()
-        if sid is None:
-            return dict(_NO_SNAPSHOT)
-        graph = store.load_graph(sid)
-        snap = store.get_snapshot(sid) or {}
-        hygiene = (snap.get("meta") or {}).get("hygiene")
-        if hygiene is None:
-            hygiene = HygieneEngine().scan(graph).to_dict()
-        if agent:
-            ids = set(resolve_agents(graph, agent))
-            scores = {k: v for k, v in hygiene["scores"].items() if k in ids}
-            # Show exactly the findings attributed to the surviving agents'
-            # scores, so the findings list can't contradict the score (a
-            # skill-level finding is owned by the agents that use the skill).
-            seen: dict[str, dict] = {}
-            for s in scores.values():
-                for f in s.get("findings", []):
-                    seen[f["id"]] = f
-            hygiene = {"findings": list(seen.values()), "scores": scores}
-        return hygiene
+def hermes_impl(view: str = "summary", profile: Optional[dict] = None) -> dict:
+    """Hermes agent introspection. ``view`` ∈ summary|capability|timeline|cost|
+    hygiene|graph|all. summary = the dashboard section; the others are slices of
+    the agent-audit payload (what it can do, what it did, model spend, hygiene
+    findings, the capability graph)."""
+    if view not in _HERMES_VIEWS:
+        return {"error": "bad_view", "message": f"view must be one of {list(_HERMES_VIEWS)}"}
+    st = _state(profile)
+    section = _trim_section(st["sections"].get("hermes", {}))
+    agent = st.get("agent") or {}
+    if view == "summary":
+        return section
+    if view == "all":
+        return {"summary": section, "agent": agent}
+    if view not in agent:
+        return {"error": "unavailable", "message": f"no '{view}' data (Hermes not readable?)",
+                "summary": section}
+    return {view: agent[view], "status": section.get("status")}
 
 
-def diff_impl(db_path, since=None) -> dict:
-    with Store(db_path) as store:
-        store.log_query("insikt_diff", {"since": since}, None)
-        to_id = store.latest_snapshot_id()
-        if to_id is None:
-            return dict(_NO_SNAPSHOT)
-        if since is not None:
-            try:
-                since_id = int(since)
-            except (TypeError, ValueError):
-                return {"error": "bad_since", "message": "`since` must be a snapshot id (integer)."}
-        else:
-            since_id = store.previous_snapshot_id(to_id)
-        if since_id is None:
-            return {"error": "no_baseline", "message": "Only one snapshot exists; nothing to diff against yet."}
-        return store.diff(since_id, to_id)
+def source_impl(name: str, profile: Optional[dict] = None) -> dict:
+    """An optional source's live section. ``name`` ∈ honcho|homeassistant|system."""
+    sec = _state(profile)["sections"].get(name)
+    if sec is None:
+        return {"error": "unknown_source", "message": f"no source named {name!r}"}
+    return _trim_section(sec)
 
 
-def explain_impl(db_path, node_id) -> dict:
-    with Store(db_path) as store:
-        store.log_query("insikt_explain", {"node_id": node_id}, None)
-        sid = store.latest_snapshot_id()
-        if sid is None:
-            return dict(_NO_SNAPSHOT)
-        detail = explain_node(store.load_graph(sid), node_id)
-        if detail is None:
-            return {"error": "not_found", "message": f"No node with id {node_id!r} in the latest snapshot."}
-        return detail
-
-
-def describe_layout_impl(db_path, framework=None) -> dict:
-    from pathlib import Path
-
+def describe_layout_impl(profile: Optional[dict] = None) -> dict:
+    """Read-only, secret-redacted digest of the Hermes home + reachability probes
+    + the profile schema, so the agent can author/repair Insikt's profile for this
+    host. Returns a profile; a human applies it with ``insikt configure --apply``."""
     from . import configure as cfg
-    from .profiles import BUILTINS
 
-    with Store(db_path) as store:
-        store.log_query("insikt_describe_layout", {"framework": framework}, None)
-    home = None
-    if framework and framework in BUILTINS:
-        home = Path(BUILTINS[framework]["home"]).expanduser()
-    if home is None or not home.is_dir():
-        for prof in BUILTINS.values():
-            h = Path(prof.get("home", "")).expanduser()
-            if h.is_dir():
-                home = h
-                break
-    if home is None or not home.is_dir():
-        return {"error": "no_home", "message": "Could not locate an agent home; pass `framework`."}
-    return cfg.describe(home, framework)
+    return cfg.describe(profile or load_profile())
 
 
-def self_report_impl(db_path) -> dict:
-    with Store(db_path) as store:
-        store.log_query("insikt_self_report", {}, None)
-        sid = store.latest_snapshot_id()
-        return {
-            "name": "insikt",
-            "version": __version__,
-            "provenance": {
-                "signed": False,
-                "note": "v0 is unsigned. Integrity roadmap (signed/pinned/reproducible "
-                "releases, verified publisher) is README §8.2 and must land before "
-                "Insikt is trusted as a security tool.",
-                "canonical_name": "insikt",
-            },
-            "permissions": PERMISSIONS,
-            "self_scan": {
-                "result": "pass",
-                "kind": "static-declaration",
-                "note": "These are Insikt's design constraints, declared statically. A "
-                "build-time self-scan of the released artifact + signature verification "
-                "is on the §8.2 integrity roadmap.",
-                "factors": [
-                    "read-only file access; no write-back to the agent",
-                    "no network egress; no shell execution",
-                    "credential key names only — never secret values",
-                    "binds to loopback only",
-                ],
-            },
-            "store": {"db": str(db_path), "latest_snapshot": sid},
-        }
+def self_report_impl(profile: Optional[dict] = None) -> dict:
+    """Insikt's own version + EXACT permissions, so the agent can prove the tool
+    to the user."""
+    return {
+        "name": "insikt",
+        "version": __version__,
+        "provenance": {
+            "signed": False,
+            "canonical_name": "insikt",
+            "repo": "https://github.com/wachtelhund/insikt",
+            "note": "v0 is unsigned. Signed/reproducible releases are on the roadmap.",
+        },
+        "permissions": PERMISSIONS,
+    }
 
 
-def build_server(db_path: str | Path = DEFAULT_DB):
-    """Construct the FastMCP server bound to a snapshot store. Imported lazily."""
+# --- FastMCP wiring -------------------------------------------------------
+def build_server(profile: Optional[dict] = None):
+    """Construct the FastMCP server. Imported lazily so the MCP SDK is optional."""
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:  # pragma: no cover
@@ -199,58 +142,52 @@ def build_server(db_path: str | Path = DEFAULT_DB):
             "The MCP server needs the 'mcp' package. Install it with: pip install 'mcp>=1.2'"
         ) from exc
 
-    db_path = str(db_path)
+    profile = profile or load_profile()
     mcp = FastMCP("insikt")
 
     @mcp.tool()
-    def insikt_query_actions(window: str = "yesterday", agent: Optional[str] = None, type: Optional[str] = None) -> dict:
-        """What did the agent DO in a window? Returns a summarized, token-light
-        action list. `window` accepts today|yesterday|<N>[smhdw]|all|<ISO>/<ISO>.
-        The answer to "what did you do yesterday?" """
-        return query_actions_impl(db_path, window=window, agent=agent, type=type)
+    def insikt_system_state() -> dict:
+        """Whole-system health: overall status plus every section (host, Hermes,
+        Honcho, Home Assistant) with its status, one-line summary, and metrics.
+        The answer to "how's everything doing?" """
+        return system_state_impl(profile)
 
     @mcp.tool()
-    def insikt_capability_surface(agent: Optional[str] = None) -> dict:
-        """What CAN the agent do? Each agent's skills, tools, connectors, models,
-        and what every skill can reach. The static capability surface."""
-        return capability_surface_impl(db_path, agent=agent)
+    def insikt_host() -> dict:
+        """Raspberry Pi / host metrics right now: SoC temperature, CPU%, memory,
+        disk, load, uptime, and any under-voltage / throttle history."""
+        return host_impl(profile)
 
     @mcp.tool()
-    def insikt_risk_report(agent: Optional[str] = None) -> dict:
-        """Hygiene findings + per-agent risk score with contributing factors
-        enumerated (never just a number)."""
-        return risk_report_impl(db_path, agent=agent)
+    def insikt_hermes(view: str = "summary") -> dict:
+        """Hermes agent introspection. view ∈ summary|capability|timeline|cost|
+        hygiene|graph|all: what it can do, what it did, model spend, hygiene
+        findings, and the capability graph."""
+        return hermes_impl(view, profile)
 
     @mcp.tool()
-    def insikt_diff(since: Optional[str] = None) -> dict:
-        """What CHANGED: new skills, new credential reads, new connectors, new
-        reachable hosts, and capability drift. `since` is a snapshot id; defaults
-        to the immediately previous snapshot."""
-        return diff_impl(db_path, since=since)
+    def insikt_source(name: str) -> dict:
+        """Live section for one source. name ∈ honcho|homeassistant|system —
+        e.g. Home Assistant version/health/entity counts, or Honcho workspace/
+        peer/session counts."""
+        return source_impl(name, profile)
 
     @mcp.tool()
-    def insikt_explain(node_id: str) -> dict:
-        """Detail on one node (skill or action): origin, hash, tools, resources,
-        credential reads, and edges."""
-        return explain_impl(db_path, node_id=node_id)
+    def insikt_describe_layout() -> dict:
+        """Read-only, secret-redacted digest of this host's layout + reachability
+        + the profile schema, so YOU can author/repair Insikt's profile. Returns a
+        profile; a human applies it with `insikt configure --apply <file>`."""
+        return describe_layout_impl(profile)
 
     @mcp.tool()
     def insikt_self_report() -> dict:
-        """Insikt's own version, provenance/signature, and EXACT permissions — so
-        the agent can prove the tool to the user before or after install."""
-        return self_report_impl(db_path)
-
-    @mcp.tool()
-    def insikt_describe_layout(framework: Optional[str] = None) -> dict:
-        """Read-only: a secret-redacted digest of the agent's home directory plus
-        the profile schema, so YOU (the agent) can author or repair Insikt's
-        collector profile for this setup. Return a profile; a human applies it
-        with `insikt configure --apply <file>`. This never writes anything."""
-        return describe_layout_impl(db_path, framework=framework)
+        """Insikt's own version, provenance, and EXACT permissions — so you can
+        prove the tool to the user before or after install."""
+        return self_report_impl(profile)
 
     return mcp
 
 
-def run(db_path: str | Path = DEFAULT_DB, transport: str = "stdio") -> None:
+def run(transport: str = "stdio", profile: Optional[dict] = None) -> None:
     """Run the MCP server (blocking). Used by ``insikt mcp``."""
-    build_server(db_path).run(transport=transport)
+    build_server(profile).run(transport=transport)

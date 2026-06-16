@@ -1,19 +1,31 @@
-"""Framework-specific collectors (the only framework-specific layer).
+"""Collectors — one per data source in the homelab stack.
 
-Each collector reads one framework's on-disk state read-only and emits the
-normalized ``Graph``. Everything downstream of here is framework-agnostic, so new
-agent support is one new collector and nothing else changes (README §3, §7).
+* ``SystemCollector``        — Raspberry Pi / host metrics (always on, fast).
+* ``HermesGraphScanner`` + ``build_hermes`` — the agent: capabilities, actions,
+  memories, models, hygiene.
+* ``HonchoCollector``        — optional memory-backend stats.
+* ``HomeAssistantCollector`` — optional HA version / health / entity inventory.
+
+Everything below the collector line is source-agnostic (state assembly, server,
+report, MCP). A new source = one new collector.
 """
 
-from .base import Collector, CollectorResult
-from .claude_code import ClaudeCodeCollector
-from .hermes import HermesCollector
-from .openclaw import OpenClawCollector
+from .base import CRIT, OFF, OK, WARN, Collector, Section
+from .hermes import HermesGraphScanner, build_hermes
+from .homeassistant import HomeAssistantCollector
+from .honcho import HonchoCollector
+from .system import SystemCollector
 
 __all__ = [
     "Collector",
-    "CollectorResult",
-    "HermesCollector",
-    "OpenClawCollector",
-    "ClaudeCodeCollector",
+    "Section",
+    "OK",
+    "WARN",
+    "CRIT",
+    "OFF",
+    "SystemCollector",
+    "HonchoCollector",
+    "HomeAssistantCollector",
+    "HermesGraphScanner",
+    "build_hermes",
 ]

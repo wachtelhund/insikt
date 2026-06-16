@@ -33,9 +33,9 @@ from typing import Optional
 import yaml
 
 from ..model import ActionType, Graph, NodeType, Rel, ResourceKind, Source, ToolKind, action_id, make_id
-from ..profiles import load_profile, scoped
+from ..profiles import HERMES_LAYOUT, hermes_layout, scoped
 from ..redact import redact_secrets
-from .base import Collector, CollectorResult
+from .base import CRIT, OFF, OK, WARN, Collector, Section
 
 FRAMEWORK = "hermes"
 _SECRET_KEY = re.compile(r"(?i)(api[_-]?key|secret|token|password|passwd|credential|bearer|webhook)")
@@ -119,14 +119,15 @@ def _json(path: Optional[Path]):
         return None
 
 
-class HermesCollector(Collector):
-    framework = FRAMEWORK
-    supported_versions = "live ~/.hermes layout (2026)"
+class HermesGraphScanner:
+    """Reads a Hermes home into the normalized capability/action graph. Plain
+    class (not a dashboard Collector) — the agent-audit graph is its product;
+    ``build_hermes`` below turns it into a dashboard Section."""
 
-    def __init__(self, home: Optional[str | Path] = None, profile: Optional[dict] = None):
-        self.profile = profile or load_profile(FRAMEWORK, home=str(home) if home else None)
+    def __init__(self, home: Optional[str | Path] = None, layout: Optional[dict] = None):
         import os
 
+        self.profile = {**HERMES_LAYOUT, **(layout or {})}
         raw = home or self.profile.get("home") or os.environ.get("HERMES_HOME") or "~/.hermes"
         self.home = Path(raw).expanduser()
 
@@ -139,7 +140,7 @@ class HermesCollector(Collector):
             or (self.home / "skills").is_dir()
         )
 
-    def collect(self) -> CollectorResult:
+    def scan(self) -> Graph:
         g = Graph()
         config = self._read_config(g)
         agent_id = self._build_agent(g, config)
@@ -151,15 +152,9 @@ class HermesCollector(Collector):
         self._build_sessions(g, agent_id, model_default)
         self._build_memory(g, agent_id)
         self._build_honcho(g, agent_id, config)
-
         if len(g.nodes) <= 1:
-            g.mark_partial("Hermes home present but little readable state — layout may differ; run `insikt configure`")
-
-        return CollectorResult(
-            framework=FRAMEWORK, graph=g, available=self.available(),
-            supported_versions=self.supported_versions,
-            detected_version=_dig(config, _dig(self.profile, "config.version_key")) and str(_dig(config, _dig(self.profile, "config.version_key"))),
-        )
+            g.mark_partial("Hermes home present but little readable state — run `insikt configure`")
+        return g
 
     # --- config + agent ---------------------------------------------------
     def _read_config(self, g: Graph) -> dict:
@@ -465,3 +460,79 @@ def _accepts_strangers(platform: str, section: dict) -> bool:
         if isinstance(v, (list, tuple)) and v:
             return False
     return True
+
+
+def build_hermes(profile: dict, now=None) -> tuple[dict, Optional[dict]]:
+    """Turn a Hermes home into (dashboard Section, agent-audit payload).
+
+    The Section is the at-a-glance summary (version/memories/skills/models/
+    findings); the payload carries the full capability / timeline / cost /
+    hygiene / graph views the dashboard's Hermes tabs render. Raw skill bodies
+    are dropped before the payload is built (never persisted/exposed)."""
+    from ..hygiene import HygieneEngine, load_advisory_feed
+    from ..views import capability_surface, cost_ledger, graph_payload, query_actions
+
+    home = (profile.get("hermes") or {}).get("home")
+    scanner = HermesGraphScanner(home=home, layout=hermes_layout(profile))
+    if not scanner.available():
+        return (
+            Section("hermes", "Hermes", available=False, status=OFF,
+                    summary="not found", data={"home": str(scanner.home)}).to_dict(),
+            None,
+        )
+    g = scanner.scan()
+    feed = load_advisory_feed(Path(__file__).resolve().parents[1] / "data" / "advisory_feed.json")
+    hygiene = HygieneEngine(advisory_feed=feed).scan(g)
+
+    agents = g.by_type(NodeType.AGENT)
+    a = agents[0] if agents else None
+    skills = g.by_type(NodeType.SKILL)
+    models = g.by_type(NodeType.MODEL)
+    conns = g.by_type(NodeType.CONNECTOR)
+    actions = g.actions()
+    sev = {}
+    for f in hygiene.findings:
+        sev[f.severity.value] = sev.get(f.severity.value, 0) + 1
+
+    status = CRIT if sev.get("critical") else WARN if (sev.get("high") or sev.get("medium")) else OK
+    memories = a.props.get("memory_items") if a else None
+    data = {
+        "config_version": a.props.get("version") if a else None,
+        "host": a.props.get("host") if a else None,
+        "gateway_platforms": a.props.get("gateway_platforms") if a else None,
+        "memories": memories,
+        "skills": len(skills),
+        "self_authored": sum(1 for s in skills if s.props.get("self_authored")),
+        "risky_skills": sum(1 for s in skills if s.props.get("risk") in ("critical", "high")),
+        "models": len(models),
+        "default_model": next((m.label for m in models if m.props.get("is_default")), None),
+        "connectors": len(conns),
+        "open_connectors": [c.props.get("platform") for c in conns if c.props.get("accepts_strangers")],
+        "actions": len(actions),
+        "findings": sev,
+    }
+    bits = []
+    if memories is not None:
+        bits.append(f"{memories} memories")
+    bits.append(f"{len(skills)} skills")
+    bits.append(f"{len(models)} models")
+    if actions:
+        bits.append(f"{len(actions)} actions")
+    if sev.get("critical") or sev.get("high"):
+        bits.append(f"⚠ {sev.get('critical',0)+sev.get('high',0)} to review")
+
+    # privacy / size: never carry raw skill bodies into the payload
+    for s in skills:
+        s.props.pop("body", None)
+
+    section = Section("hermes", "Hermes", available=True, status=status,
+                      summary="  ·  ".join(bits), data=data,
+                      partial=g.partial, reasons=g.partial_reasons[:5]).to_dict()
+    payload = {
+        "capability": capability_surface(g),
+        "timeline": query_actions(g, window="all", now=now, limit=1000),
+        "cost": cost_ledger(g),
+        "hygiene": hygiene.to_dict(),
+        "graph": graph_payload(g),
+    }
+    return section, payload

@@ -1,10 +1,11 @@
-"""Self-contained HTML report generation (README §5, §9 v0 shortcut).
+"""Self-contained HTML dashboard generation (offline, no CDN).
 
-``render_report`` assembles every view's payload from :mod:`insikt.views` and the
-hygiene result, then inlines it into a single offline HTML file — no CDN, no
-network, Raspberry-Pi friendly.
+``render_dashboard(state, live)`` renders the whole-system state into one inline
+HTML file. With ``live=True`` (the web server) the page subscribes to ``/events``
+for real-time host metrics; with ``live=False`` (a one-shot ``scan``) it's a
+static snapshot.
 """
 
-from .builder import render_report
+from .dashboard import render_dashboard
 
-__all__ = ["render_report"]
+__all__ = ["render_dashboard"]

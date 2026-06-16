@@ -1,13 +1,10 @@
 """``insikt`` command-line interface.
 
-Subcommands:
-
-* ``scan``      run collectors, persist a snapshot, emit ``overview.html``.
-* ``report``    re-render the HTML for an existing snapshot.
-* ``diff``      print what changed between two snapshots.
-* ``snapshots`` list stored snapshots.
-* ``queries``   show the meta-audit log (queries made *to* Insikt).
-* ``mcp``       run the read-only MCP server.
+* ``scan``      one-shot whole-system report -> overview.html
+* ``serve``     live read-only dashboard web server (reachable over ZeroTier)
+* ``configure`` propose / apply a system profile (AI-first; agent-assisted)
+* ``update``    update Insikt to the latest release
+* ``mcp``       read-only MCP server for the agent
 """
 
 from __future__ import annotations
@@ -19,513 +16,131 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from .collectors import ClaudeCodeCollector, HermesCollector, OpenClawCollector
-from .hygiene import HygieneEngine, load_advisory_feed
-from .model import Graph, NodeType
-from .report import render_report
-from .store import Store, _now_iso, diff_graphs
+from .profiles import load_profile
+from .report import render_dashboard
+from .state import collect_state
 
-DEFAULT_DB = "~/.insikt/insikt.db"
 DEFAULT_OUT = "overview.html"
-BUNDLED_FEED = Path(__file__).resolve().parent / "data" / "advisory_feed.json"
 
 
-def _build_collectors(args) -> list:
-    cols = []
-    if not args.no_hermes:
-        cols.append(HermesCollector(home=args.hermes_home))
-    if not args.no_openclaw:
-        cols.append(OpenClawCollector(home=args.openclaw_home))
-    if not args.no_claude_code:
-        cols.append(ClaudeCodeCollector(home=args.claude_code_home))
-    return cols
+def _overrides(args) -> dict:
+    o: dict = {}
+    if getattr(args, "hermes_home", None):
+        o.setdefault("hermes", {})["home"] = args.hermes_home
+    if getattr(args, "honcho_url", None):
+        o.setdefault("honcho", {})["base_url"] = args.honcho_url
+    if getattr(args, "ha_url", None):
+        o.setdefault("homeassistant", {})["base_url"] = args.ha_url
+    return o
+
+
+def _print_summary(state: dict, out: Optional[Path] = None) -> None:
+    m = state["meta"]
+    print(f"insikt {__version__} — {m['host']}  ({m.get('model') or 'host'})")
+    for key, s in state["sections"].items():
+        flag = {"ok": "·", "warn": "!", "crit": "✗", "off": "–"}.get(s["status"], "·")
+        print(f"  [{flag}] {s['title']:<14} {s['summary'][:70]}")
+    print(f"  overall: {state['status']}")
+    if out:
+        print(f"  report → {out}")
 
 
 def cmd_scan(args) -> int:
-    collectors = _build_collectors(args)
-    graph = Graph()
-    frameworks: list[str] = []
-    detected: dict[str, Optional[str]] = {}
-
-    for col in collectors:
-        if not col.available():
-            continue
-        result = col.collect()
-        graph.merge(result.graph)
-        frameworks.append(result.framework)
-        detected[result.framework] = result.detected_version
-
-    if not frameworks:
-        print(
-            "No agent state found. Looked for Hermes (~/.hermes or --hermes-home) "
-            "and OpenClaw (~/.openclaw or --openclaw-home).",
-            file=sys.stderr,
-        )
-        return 2
-
-    host = next(
-        (a.props.get("host") for a in graph.by_type(NodeType.AGENT) if a.props.get("host")),
-        None,
-    )
-    scan_ts = _now_iso()
-
-    # Advisory feed (pluggable; bundled sample by default).
-    feed_path = args.feed
-    if feed_path is None and not args.no_feed and BUNDLED_FEED.exists():
-        feed_path = str(BUNDLED_FEED)
-    feed = load_advisory_feed(feed_path)
-
-    # Diff + drift vs the previous snapshot, if any.
-    report_diff = None
-    drift = None
-    store: Optional[Store] = None
-    if not args.no_store:
-        store = Store(args.db)
-        prev_id = store.latest_snapshot_id()
-        if prev_id is not None:
-            prev_graph = store.load_graph(prev_id)
-            if prev_graph is not None:
-                drift = diff_graphs(prev_graph, graph, since_id=prev_id, to_id=None)
-
-    hygiene = HygieneEngine(advisory_feed=feed).scan(graph, drift=drift)
-
-    # The static scan is done; the raw skill body is no longer needed and must
-    # NOT be persisted — it can contain hardcoded secrets. Keep only the
-    # redacted body_excerpt the collector already produced.
-    for skill in graph.by_type(NodeType.SKILL):
-        skill.props.pop("body", None)
-
-    snapshot_id = None
-    meta = {
-        "title": f"Insikt — {', '.join(frameworks)} audit",
-        "host": host,
-        "scan_ts": scan_ts,
-        "frameworks": frameworks,
-        "detected_versions": detected,
-        "hygiene": hygiene.to_dict(),
-        "feed_version": feed.get("version"),
-    }
-    if store is not None:
-        snapshot_id = store.write_snapshot(
-            graph, tool_version=__version__, host=host, meta=meta, ts=scan_ts
-        )
-        if drift is not None:
-            drift["to"]["id"] = snapshot_id
-            report_diff = drift
-        store.close()
-
-    meta["snapshot_id"] = snapshot_id
-    html = render_report(graph, meta=meta, hygiene=hygiene, diff=report_diff)
-    out_path = Path(args.out).expanduser()
-    out_path.write_text(html, encoding="utf-8")
-
-    _print_scan_summary(graph, hygiene, frameworks, snapshot_id, out_path)
+    profile = load_profile(_overrides(args))
+    state = collect_state(profile)
+    out = Path(args.out).expanduser()
+    out.write_text(render_dashboard(state, live=False), encoding="utf-8")
+    _print_summary(state, out)
     if args.open:
-        _open_in_browser(out_path)
+        import webbrowser
+
+        webbrowser.open(out.resolve().as_uri())
     return 0
 
 
-def _print_scan_summary(graph, hygiene, frameworks, snapshot_id, out_path) -> None:
-    n = lambda t: len(graph.by_type(t))
-    print(f"insikt {__version__} — scanned: {', '.join(frameworks)}")
-    if graph.partial:
-        print(f"  ⚠ partial: {'; '.join(graph.partial_reasons)}")
-    print(
-        f"  agents={n(NodeType.AGENT)} skills={n(NodeType.SKILL)} "
-        f"tools={n(NodeType.TOOL)} connectors={n(NodeType.CONNECTOR)} "
-        f"models={n(NodeType.MODEL)} creds={n(NodeType.CREDENTIAL_REF)} "
-        f"actions={len(graph.actions())}"
-    )
-    findings = hygiene.findings
-    if findings:
-        by_sev: dict[str, int] = {}
-        for f in findings:
-            by_sev[f.severity.value] = by_sev.get(f.severity.value, 0) + 1
-        sev_str = " ".join(f"{k}={v}" for k, v in sorted(by_sev.items(), key=lambda x: -len(x[0])))
-        print(f"  hygiene: {len(findings)} finding(s) [{sev_str}]")
-        worst = sorted(findings, key=lambda f: f.severity.weight, reverse=True)[:3]
-        for f in worst:
-            print(f"    • [{f.severity.value}] {f.title}")
-    else:
-        print("  hygiene: no findings ✓")
-    if snapshot_id is not None:
-        print(f"  snapshot #{snapshot_id} stored")
-    print(f"  report → {out_path}")
+def cmd_serve(args) -> int:
+    from .server import serve
 
-
-def _open_in_browser(path: Path) -> None:
-    import webbrowser
-
-    webbrowser.open(path.resolve().as_uri())
-
-
-def cmd_report(args) -> int:
-    store = Store(args.db)
-    try:
-        sid = args.snapshot or store.latest_snapshot_id()
-        if sid is None:
-            print("No snapshots stored. Run `insikt scan` first.", file=sys.stderr)
-            return 2
-        graph = store.load_graph(sid)
-        snap = store.get_snapshot(sid) or {}
-        meta = snap.get("meta") or {}
-        meta["snapshot_id"] = sid
-        from .hygiene import HygieneResult
-        from .model import Finding, RiskScore, Severity
-
-        hy_dict = meta.get("hygiene") or {"findings": [], "scores": {}}
-        hygiene = _hydrate_hygiene(hy_dict, Finding, RiskScore, Severity, HygieneResult)
-        prev = store.previous_snapshot_id(sid)
-        report_diff = store.diff(prev, sid) if prev is not None else None
-        html = render_report(graph, meta=meta, hygiene=hygiene, diff=report_diff)
-        out_path = Path(args.out).expanduser()
-        out_path.write_text(html, encoding="utf-8")
-        print(f"report (snapshot #{sid}) → {out_path}")
-        if args.open:
-            _open_in_browser(out_path)
-        return 0
-    finally:
-        store.close()
-
-
-def _hydrate_hygiene(hy_dict, Finding, RiskScore, Severity, HygieneResult):
-    findings = [
-        Finding(
-            id=f["id"], severity=Severity(f["severity"]), title=f["title"], detail=f["detail"],
-            node_id=f.get("node_id"), agent_id=f.get("agent_id"), factors=f.get("factors", []),
-            remediation=f.get("remediation"),
-        )
-        for f in hy_dict.get("findings", [])
-    ]
-    by_id = {f.id: f for f in findings}
-    scores = {}
-    for aid, s in hy_dict.get("scores", {}).items():
-        rs_findings = [by_id[f["id"]] for f in s.get("findings", []) if f["id"] in by_id]
-        scores[aid] = RiskScore(agent_id=s["agent_id"], score=s["score"], findings=rs_findings)
-    return HygieneResult(findings=findings, scores=scores)
-
-
-def cmd_diff(args) -> int:
-    store = Store(args.db)
-    try:
-        to_id = args.to or store.latest_snapshot_id()
-        if to_id is None:
-            print("No snapshots stored.", file=sys.stderr)
-            return 2
-        since_id = args.since if args.since is not None else store.previous_snapshot_id(to_id)
-        if since_id is None:
-            print("Only one snapshot exists; nothing to diff against.", file=sys.stderr)
-            return 2
-        d = store.diff(since_id, to_id)
-        if args.json:
-            print(json.dumps(d, indent=2))
-        else:
-            print(f"diff #{since_id} → #{to_id}: {d['summary']}")
-            for key, label in [
-                ("new_skills", "new skill"),
-                ("capability_drift", "capability drift"),
-                ("new_credential_reads", "new credential read"),
-                ("new_connectors", "new connector"),
-                ("new_reachable_hosts", "new reachable host"),
-                ("removed_skills", "removed skill"),
-            ]:
-                for item in d.get(key, []):
-                    print(f"  + {label}: {item.get('label') or item.get('skill') or item}")
-        return 0
-    finally:
-        store.close()
-
-
-def cmd_snapshots(args) -> int:
-    store = Store(args.db)
-    try:
-        snaps = store.list_snapshots()
-        if not snaps:
-            print("No snapshots stored.")
-            return 0
-        for s in snaps:
-            counts = s.get("node_counts", {})
-            flag = " PARTIAL" if s["partial"] else ""
-            print(
-                f"#{s['id']}  {s['ts']}  {s.get('host') or '-'}  "
-                f"agents={counts.get('agent',0)} skills={counts.get('skill',0)} "
-                f"actions={counts.get('action',0)}{flag}"
-            )
-        return 0
-    finally:
-        store.close()
-
-
-def cmd_queries(args) -> int:
-    store = Store(args.db)
-    try:
-        rows = store.list_queries(limit=args.limit)
-        if not rows:
-            print("No queries logged yet (meta-audit is empty).")
-            return 0
-        for r in rows:
-            params = json.dumps(r["params"]) if r["params"] else ""
-            print(f"{r['ts']}  {r['tool']}  {r.get('agent') or ''}  {params}")
-        return 0
-    finally:
-        store.close()
-
-
-def _resolve_home(args) -> Path:
-    from .profiles import BUILTINS
-
-    if getattr(args, "home", None):
-        return Path(args.home).expanduser()
-    if getattr(args, "framework", None) and args.framework in BUILTINS:
-        return Path(BUILTINS[args.framework].get("home", "~")).expanduser()
-    for prof in BUILTINS.values():
-        h = Path(prof.get("home", "")).expanduser()
-        if h.is_dir():
-            return h
-    return Path("~/.hermes").expanduser()
-
-
-def _confirm(prompt: str, assume_yes: bool) -> bool:
-    if assume_yes:
-        return True
-    if not sys.stdin.isatty():
-        print("  (non-interactive — re-run with --yes to save, or edit the file directly)")
-        return False
-    try:
-        return input(f"{prompt} [Y/n]: ").strip().lower() in ("", "y", "yes")
-    except EOFError:
-        return False
+    serve(load_profile(_overrides(args)), bind=args.bind, port=args.port)
+    return 0
 
 
 def cmd_configure(args) -> int:
-    """Propose / validate / apply a collector profile (agent-assisted)."""
-    import yaml
+    from .configure import run_configure
 
-    from . import configure as cfg
-    from .profiles import load_profile, save_profile
+    return run_configure(args)
 
-    home = _resolve_home(args)
-    framework = args.framework or cfg.detect_framework(home) or "unknown"
 
-    if args.show:
-        print(yaml.safe_dump(load_profile(framework, home=str(home)), sort_keys=False))
-        return 0
+def cmd_mcp(args) -> int:
+    from .mcp_server import run
 
-    if args.describe:
-        print(json.dumps(cfg.describe(home, framework), indent=2, default=str))
-        return 0
-
-    if args.apply:
-        text = Path(args.apply).expanduser().read_text(encoding="utf-8")
-        try:
-            profile = yaml.safe_load(text)
-        except yaml.YAMLError as exc:
-            print(f"could not parse {args.apply}: {exc}", file=sys.stderr)
-            return 2
-        if not isinstance(profile, dict):
-            print("profile must be a mapping", file=sys.stderr)
-            return 2
-        framework = profile.get("framework", framework)
-        _print_validation(cfg.validate_profile(home, framework, profile))
-        if _confirm("Save this profile?", args.yes):
-            print(f"saved → {save_profile(framework, profile)}")
-        return 0
-
-    # Propose flow: offer the agent (AI) path FIRST, heuristic as the fallback.
-    if args.agent:
-        use_agent = True
-    elif args.auto or args.yes:
-        use_agent = False
-    elif sys.stdin.isatty():
-        use_agent = _confirm(
-            "Use your agent to find the optimal configuration?\n"
-            "  (it knows your filesystem best — recommended; decline to use a heuristic instead)",
-            assume_yes=False,
-        )
-    else:
-        use_agent = False  # non-interactive: heuristic, unless --agent
-
-    if use_agent:
-        return _agent_configure(home, framework, args)
-
-    framework, profile, validation = cfg.propose(home, framework)
-    print(f"\nproposed profile for '{framework}' (home {home}):\n")
-    print(yaml.safe_dump(profile, sort_keys=False))
-    _print_validation(validation)
-    if _confirm("Save this profile?", args.yes):
-        print(f"saved → {save_profile(framework, profile)}")
+    run(transport=args.transport)
     return 0
-
-
-def _agent_configure(home: Path, framework: str, args) -> int:
-    """Drive the user's agent to author a profile, then validate + confirm + save.
-    Falls back to the manual hand-off if no agent CLI is available."""
-    import yaml
-
-    from . import configure as cfg
-    from .profiles import save_profile
-
-    if cfg.agent_driver_available(framework):
-        print(f"\nasking your {framework} agent to author a profile (one model call, ~30s)…")
-        profile, note = cfg.agent_author_profile(home, framework, timeout=args.timeout)
-        if profile:
-            print("\nyour agent proposed:\n")
-            print(yaml.safe_dump(profile, sort_keys=False))
-            _print_validation(cfg.validate_profile(home, framework, profile))
-            if _confirm("Save this profile?", args.yes):
-                print(f"saved → {save_profile(framework, profile)}")
-            return 0
-        print(f"  ⚠ couldn't use the agent automatically ({note}); falling back to manual hand-off.")
-    return _agent_handoff(home, framework)
-
-
-def _agent_handoff(home: Path, framework: str) -> int:
-    """Hand configuration to the user's agent: write the layout digest + schema
-    and print the exact ask. The agent (which knows its own filesystem) authors
-    the profile and applies it. Insikt itself is not the LLM — the agent is."""
-    import json as _json
-
-    from . import configure as cfg
-    from .profiles import PROFILE_DIR
-
-    digest = cfg.describe(home, framework)
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    req = PROFILE_DIR.parent / "configure-request.json"
-    req.write_text(_json.dumps(digest, indent=2, default=str), encoding="utf-8")
-    print(f"\nLet your agent configure Insikt — it knows {home} best.\n")
-    print("  1. Make sure Insikt's MCP server is connected to your agent:")
-    print('       hermes mcp add insikt --command "insikt mcp"')
-    print("  2. Ask your agent:")
-    print('       "Configure Insikt for me: call insikt_describe_layout, write a')
-    print("        collector profile matching the schema, and run")
-    print(f'        `insikt configure --framework {framework} --apply <file>`."')
-    print(f"\n  (Digest also saved for manual hand-off → {req})")
-    print("  Prefer to do it yourself? Re-run with --auto for a heuristic profile.")
-    return 0
-
-
-def _print_validation(v: dict) -> None:
-    if not v.get("supported", True):
-        print(f"  ⚠ {v.get('message')}")
-        return
-    c = v.get("counts", {})
-    print("  validation: " + " ".join(f"{k}={val}" for k, val in c.items()))
-    if v.get("partial"):
-        print(f"  ⚠ partial: {'; '.join(v.get('reasons', []))}")
 
 
 def cmd_update(args) -> int:
-    """Update Insikt to the latest release, re-installing from the source the
-    installer recorded (a clone path, a git URL, or the published package).
-    Equivalent to re-running the installer, which is also always safe."""
     import os
     import shutil
     import subprocess
-    import sys
 
     venv_python = sys.executable
-    home = Path(sys.prefix).parent  # the venv lives at <INSIKT_HOME>/venv
+    home = Path(sys.prefix).parent
     marker = home / "source"
     source = (
         os.environ.get("INSIKT_SOURCE")
         or (marker.read_text(encoding="utf-8").strip() if marker.exists() else None)
-        or "insikt"  # the published package, once on PyPI
+        or "insikt"
     )
     print(f"updating insikt from: {source}")
-    # Force the package to rebuild: a git/local source often keeps the same
-    # version string, which makes a plain `pip install --upgrade` a no-op.
     if shutil.which("uv"):
-        rc = subprocess.call(
-            ["uv", "pip", "install", "--python", venv_python, "--reinstall-package", "insikt", source]
-        )
+        rc = subprocess.call(["uv", "pip", "install", "--python", venv_python, "--reinstall-package", "insikt", source])
     else:
-        subprocess.call([venv_python, "-m", "pip", "install", "--upgrade", source])  # any new deps
+        subprocess.call([venv_python, "-m", "pip", "install", "--upgrade", source])
         rc = subprocess.call([venv_python, "-m", "pip", "install", "--force-reinstall", "--no-deps", source])
     if rc != 0:
-        print(
-            "update failed — re-run the installer instead:\n"
-            "  curl -fsSL https://raw.githubusercontent.com/wachtelhund/insikt/main/install.sh | sh",
-            file=sys.stderr,
-        )
+        print("update failed — re-run the installer:\n  curl -fsSL https://raw.githubusercontent.com/wachtelhund/insikt/main/install.sh | sh", file=sys.stderr)
         return rc
     ver = subprocess.run([venv_python, "-m", "insikt", "--version"], capture_output=True, text=True)
     print((ver.stdout or ver.stderr).strip() or "updated")
     return 0
 
 
-def cmd_mcp(args) -> int:
-    from .mcp_server import run
-
-    run(db_path=args.db, transport=args.transport)
-    return 0
-
-
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="insikt",
-        description="Local-first, read-only auditor for self-hosted AI agents.",
-    )
+    p = argparse.ArgumentParser(prog="insikt", description="Local-first whole-system observability for a self-hosted homelab (Raspberry Pi + Hermes + optional Honcho/Home Assistant).")
     p.add_argument("--version", action="version", version=f"insikt {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
-    def add_db(sp):
-        sp.add_argument("--db", default=DEFAULT_DB, help=f"snapshot store path (default {DEFAULT_DB})")
+    def src_args(sp):
+        sp.add_argument("--hermes-home", default=None, help="Hermes home (default ~/.hermes)")
+        sp.add_argument("--honcho-url", default=None, help="Honcho base URL")
+        sp.add_argument("--ha-url", default=None, help="Home Assistant base URL")
 
-    sp = sub.add_parser("scan", help="collect, snapshot, and emit overview.html")
-    add_db(sp)
-    sp.add_argument("--hermes-home", default=None, help="path to a Hermes home (default $HERMES_HOME or ~/.hermes)")
-    sp.add_argument("--openclaw-home", default=None, help="path to an OpenClaw home (default $OPENCLAW_HOME or ~/.openclaw)")
-    sp.add_argument("--claude-code-home", default=None, help="path to a Claude Code home (default $CLAUDE_HOME or ~/.claude)")
-    sp.add_argument("--no-hermes", action="store_true", help="skip the Hermes collector")
-    sp.add_argument("--no-openclaw", action="store_true", help="skip the OpenClaw collector")
-    sp.add_argument("--no-claude-code", action="store_true", help="skip the Claude Code collector")
-    sp.add_argument("--out", default=DEFAULT_OUT, help=f"HTML output path (default {DEFAULT_OUT})")
-    sp.add_argument("--feed", default=None, help="advisory feed JSON path (default: bundled sample)")
-    sp.add_argument("--no-feed", action="store_true", help="do not load any advisory feed")
-    sp.add_argument("--no-store", action="store_true", help="do not persist a snapshot (HTML only)")
-    sp.add_argument("--open", action="store_true", help="open the report in a browser")
-    sp.set_defaults(func=cmd_scan)
-
-    sp = sub.add_parser("report", help="re-render HTML for a stored snapshot")
-    add_db(sp)
-    sp.add_argument("--snapshot", type=int, default=None, help="snapshot id (default: latest)")
+    sp = sub.add_parser("scan", help="one-shot system report -> overview.html")
+    src_args(sp)
     sp.add_argument("--out", default=DEFAULT_OUT)
     sp.add_argument("--open", action="store_true")
-    sp.set_defaults(func=cmd_report)
+    sp.set_defaults(func=cmd_scan)
 
-    sp = sub.add_parser("diff", help="show what changed between snapshots")
-    add_db(sp)
-    sp.add_argument("--since", type=int, default=None, help="baseline snapshot id (default: previous)")
-    sp.add_argument("--to", type=int, default=None, help="target snapshot id (default: latest)")
-    sp.add_argument("--json", action="store_true", help="emit JSON")
-    sp.set_defaults(func=cmd_diff)
+    sp = sub.add_parser("serve", help="run the live read-only dashboard web server")
+    src_args(sp)
+    sp.add_argument("--bind", default=None, help="bind address (default 0.0.0.0 — reachable over the overlay)")
+    sp.add_argument("--port", type=int, default=None, help="port (default 8420)")
+    sp.set_defaults(func=cmd_serve)
 
-    sp = sub.add_parser("snapshots", help="list stored snapshots")
-    add_db(sp)
-    sp.set_defaults(func=cmd_snapshots)
-
-    sp = sub.add_parser("queries", help="show the meta-audit log")
-    add_db(sp)
-    sp.add_argument("--limit", type=int, default=50)
-    sp.set_defaults(func=cmd_queries)
-
-    sp = sub.add_parser("configure", help="propose/validate/apply a collector profile for your agent")
-    sp.add_argument("--framework", default=None, help="hermes | openclaw | … (default: autodetect)")
-    sp.add_argument("--home", default=None, help="agent home dir (default: framework default)")
-    sp.add_argument("--apply", default=None, metavar="FILE", help="apply an agent-authored profile (yaml/json)")
-    sp.add_argument("--describe", action="store_true", help="emit a layout digest + schema for an agent to author a profile")
-    sp.add_argument("--show", action="store_true", help="print the current effective profile")
-    sp.add_argument("--agent", action="store_true", help="have your agent author the profile (skip the prompt)")
-    sp.add_argument("--auto", action="store_true", help="use the heuristic profile (skip the agent prompt)")
-    sp.add_argument("--timeout", type=int, default=240, help="seconds to wait for the agent (default 240)")
-    sp.add_argument("--yes", action="store_true", help="save without prompting")
+    sp = sub.add_parser("configure", help="propose/apply a system profile (agent-assisted)")
+    sp.add_argument("--agent", action="store_true", help="have your agent author the profile")
+    sp.add_argument("--auto", action="store_true", help="use the heuristic profile")
+    sp.add_argument("--apply", default=None, metavar="FILE")
+    sp.add_argument("--describe", action="store_true")
+    sp.add_argument("--show", action="store_true")
+    sp.add_argument("--yes", action="store_true")
+    sp.add_argument("--timeout", type=int, default=240)
     sp.set_defaults(func=cmd_configure)
 
     sp = sub.add_parser("update", help="update insikt to the latest release")
     sp.set_defaults(func=cmd_update)
 
     sp = sub.add_parser("mcp", help="run the read-only MCP server")
-    add_db(sp)
     sp.add_argument("--transport", default="stdio", choices=["stdio", "sse", "streamable-http"])
     sp.set_defaults(func=cmd_mcp)
 
@@ -533,10 +148,5 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
     return args.func(args)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

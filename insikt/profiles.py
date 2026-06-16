@@ -1,29 +1,23 @@
-"""Declarative collector **profiles** — where each thing lives + how to read it.
+"""The system **profile** — config-driven, never hardcoded.
 
-A profile is plain data (a dict, persisted as YAML). Insikt ships a built-in
-profile per known framework, and a user (or their agent, via ``insikt
-configure``) can drop an override at ``~/.insikt/profiles/<framework>.yaml`` —
-the override is shallow-merged over the built-in. This is how Insikt adapts to
-real-world layout and version drift without code changes (README/SPEC §3, §10.3):
-the agent already knows its own filesystem, so it can describe it.
-
-Reads are scoped to the agent's home directory (a footgun guard, not a trust
-control): a path that escapes the home is ignored.
+One profile describes a homelab: where Hermes lives, the Honcho / Home Assistant
+URLs + token, host thresholds, and the web-server bind. Built-in defaults fit the
+standard "Hermes on a Raspberry Pi (+ optional Honcho + Home Assistant)" setup,
+so anyone with a similar stack uses Insikt unchanged; a user — or their agent via
+``insikt configure`` — drops an override at ``~/.insikt/profile.yaml`` (shallow,
+per-section merge). Reads stay scoped to the agent home (a footgun guard).
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 
-PROFILE_DIR = Path("~/.insikt/profiles").expanduser()
+PROFILE_PATH = Path("~/.insikt/profile.yaml").expanduser()
 
-# Built-in profile for the real Hermes layout (reverse-engineered from a live
-# ~/.hermes). Paths are relative to `home`; dotted strings index into config.yaml.
-HERMES_PROFILE: dict = {
-    "framework": "hermes",
-    "home": "~/.hermes",
+# Hermes on-disk layout (what the scanner reads). Override paths under
+# profile["hermes"]; defaults match a live ~/.hermes.
+HERMES_LAYOUT: dict = {
     "agent_id": "main",
     "config_file": "config.yaml",
     "env_file": ".env",
@@ -36,7 +30,6 @@ HERMES_PROFILE: dict = {
         "security_section": "security",
         "skills_section": "skills",
         "memory_section": "memory",
-        # platform sections that, if present, indicate a messaging connector
         "platform_sections": [
             "slack", "telegram", "discord", "whatsapp", "matrix", "signal",
             "mattermost", "email", "sms", "teams", "google_chat", "line",
@@ -52,36 +45,17 @@ HERMES_PROFILE: dict = {
     "honcho_file": "honcho.json",
 }
 
-# Built-in profile for OpenClaw (lean; the layout used by the v0 fixture).
-OPENCLAW_PROFILE: dict = {
-    "framework": "openclaw",
-    "home": "~/.openclaw",
-    "agent_id": "default",
-    "config_file": "openclaw.json",
-    "credentials_dir": "credentials",
-    "skills_dir": "skills",
-    "usage_file": "usage.jsonl",
-}
-
-# Built-in profile for the real Claude Code layout (~/.claude).
-CLAUDE_CODE_PROFILE: dict = {
-    "framework": "claude-code",
-    "home": "~/.claude",
-    "agent_id": "default",
-    "settings_files": ["settings.json", "settings.local.json"],
-    "credentials_file": ".credentials.json",
-    "mcp_auth_cache": "mcp-needs-auth-cache.json",
-    "skill_globs": ["skills/**/SKILL.md", "commands/**/*.md", "agents/**/*.md"],
-    "sessions_glob": "projects/**/*.jsonl",
-    "history_file": "history.jsonl",
-    "max_session_files": 25,
-    "max_actions": 400,
-}
-
-BUILTINS = {
-    "hermes": HERMES_PROFILE,
-    "openclaw": OPENCLAW_PROFILE,
-    "claude-code": CLAUDE_CODE_PROFILE,
+DEFAULT_PROFILE: dict = {
+    "system": {"enabled": True, "temp_warn": 70, "temp_crit": 80},
+    "hermes": {"home": "~/.hermes"},
+    "honcho": {"enabled": "auto", "base_url": "http://localhost:8000"},
+    "homeassistant": {
+        "enabled": "auto",
+        "base_url": "http://localhost:8123",
+        "token_file": "~/.hermes/ha_token.txt",
+        "token_env": "HA_TOKEN",
+    },
+    "server": {"bind": "0.0.0.0", "port": 8420, "refresh": 5},
 }
 
 
@@ -95,37 +69,38 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
-def load_profile(framework: str, *, home: Optional[str] = None) -> dict:
-    """Built-in profile for ``framework``, shallow-merged with any user override
-    at ``~/.insikt/profiles/<framework>.yaml``. ``home`` overrides the root dir."""
-    profile = dict(BUILTINS.get(framework, {"framework": framework}))
-    override_path = PROFILE_DIR / f"{framework}.yaml"
-    if override_path.exists():
+def load_profile(overrides: Optional[dict] = None) -> dict:
+    """Default profile, merged with ~/.insikt/profile.yaml and any explicit overrides."""
+    profile = dict(DEFAULT_PROFILE)
+    if PROFILE_PATH.exists():
         try:
             import yaml
 
-            override = yaml.safe_load(override_path.read_text(encoding="utf-8")) or {}
-            if isinstance(override, dict):
-                profile = _deep_merge(profile, override)
+            data = yaml.safe_load(PROFILE_PATH.read_text(encoding="utf-8")) or {}
+            if isinstance(data, dict):
+                profile = _deep_merge(profile, data)
         except Exception:
             pass  # a broken override must never block a scan
-    if home:
-        profile["home"] = home
+    if overrides:
+        profile = _deep_merge(profile, overrides)
     return profile
 
 
-def save_profile(framework: str, profile: dict) -> Path:
-    """Persist a profile override (used by ``insikt configure``)."""
+def save_profile(profile: dict) -> Path:
     import yaml
 
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    path = PROFILE_DIR / f"{framework}.yaml"
-    path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
-    return path
+    PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PROFILE_PATH.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    return PROFILE_PATH
+
+
+def hermes_layout(profile: dict) -> dict:
+    """Effective Hermes layout = built-in defaults + profile['hermes'] overrides."""
+    return _deep_merge(HERMES_LAYOUT, profile.get("hermes") or {})
 
 
 def scoped(home: Path, rel: str) -> Optional[Path]:
-    """Resolve ``rel`` under ``home``, refusing paths that escape the home dir."""
+    """Resolve ``rel`` under ``home``, refusing paths that escape it."""
     if not rel:
         return None
     p = (home / rel).resolve()

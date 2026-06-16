@@ -71,7 +71,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   nav button.active::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--grad);border-radius:3px 3px 0 0}
   nav button .sd{width:7px;height:7px;border-radius:50%}
 
-  main{padding:24px 0 48px}
+  main{padding:36px 0 56px}
   section.tab{display:none;animation:f .16s ease}
   section.tab.active{display:block}
   @keyframes f{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
@@ -94,6 +94,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .g-warn{filter:drop-shadow(0 0 5px rgba(253,181,42,.5))}
   .g-crit{filter:drop-shadow(0 0 6px rgba(255,92,124,.55))}
   .g-off{filter:none}
+  .garc{transition:stroke-dasharray .7s cubic-bezier(.4,0,.2,1)}  /* animate gauges on value change */
+  .gv{transition:none}
   .stat{background:linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,0)) ,var(--sc);border:1px solid var(--line);border-radius:var(--r2);padding:16px 18px}
   .stat .n{font-size:23px;font-weight:700;letter-spacing:-.02em}
   .stat .l{color:var(--on2);font-size:12.5px;margin-top:4px}
@@ -153,11 +155,18 @@ _TEMPLATE = r"""<!DOCTYPE html>
   /* donut + legend */
   svg.donut{flex:0 0 auto}
   .dn{fill:#fff;font-size:23px;font-weight:700} .dl{fill:var(--on3);font-size:10px;letter-spacing:.1em}
-  .chart-body{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
-  .legend{display:flex;flex-direction:column;gap:10px;flex:1;min-width:130px}
+  .chart-body{display:flex;gap:30px;align-items:center;justify-content:center;flex-wrap:wrap;padding:6px 0}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:9px 22px;flex:0 1 360px;min-width:200px}
   .lg{display:flex;align-items:center;gap:11px;font-size:13.5px}
   .lg .sw{width:11px;height:11px;border-radius:4px} .lg .lt{color:var(--on2);flex:1;text-transform:capitalize}
   .lg .lv{font-weight:600;font-variant-numeric:tabular-nums}
+
+  /* host history (area/line charts) */
+  .hist .hh{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .hist .ht{color:var(--on2);font-size:13px;font-weight:600}
+  .hist .hv{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+  .hist .hr{color:var(--on3);font-size:11.5px;font-variant-numeric:tabular-nums}
+  .spark{width:100%;height:88px;display:block;margin-top:10px}
 
   /* timeline + table + graph (Hermes subviews) */
   .ev{display:flex;gap:14px;padding:13px 0}
@@ -201,6 +210,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .cform input:focus{outline:none;border-color:var(--primary)}
   .cform button{background:var(--grad);color:#fff;border:none;border-radius:var(--r3);padding:0 22px;font-weight:600;font-size:14px;cursor:pointer;min-height:46px}
   .cform button:disabled{opacity:.5;cursor:default}
+  .cclear{align-self:flex-start;background:none;border:none;color:var(--on3);font-size:12px;cursor:pointer;padding:2px 0}
+  .cclear:hover{color:var(--on2);text-decoration:underline}
 
   @media (max-width:560px){
     .wrap{padding:0 15px}
@@ -235,6 +246,7 @@ const DATA=JSON.parse(document.getElementById("d").textContent);
 const LIVE=__LIVE__;
 const S=()=>DATA.sections||{};
 const A=()=>DATA.agent;
+const secOf=id=>(id==="host"?S().system:S()[id])||null;  // the "host" tab maps to the "system" section
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const $=id=>document.getElementById(id);
 const fmtN=n=>(n==null?"—":Number(n).toLocaleString());
@@ -256,12 +268,12 @@ const ic=n=>`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColo
 const fmtTs=t=>(t||"").replace("T"," ").replace(/[.+Z].*/,"");
 const PAL=["#6C72FF","#57C3FF","#9A91FB","#FDB52A","#C95CFF","#4FB0FF","#FF8FB1","#7E89AC"];
 
-function gauge(label,valTxt,unit,pct,status){
+function gauge(label,valTxt,unit,pct,status,key){
   status=STC[status]?status:"off";const grad=`url(#gg-${status})`;
   pct=Math.max(0,Math.min(100,pct||0));const r=52,c=2*Math.PI*r,len=pct/100*c;
-  return `<div class="gauge"><svg viewBox="0 0 140 140" width="116" height="116">`+
+  return `<div class="gauge"${key?` data-g="${key}"`:""}><svg viewBox="0 0 140 140" width="116" height="116">`+
     `<circle cx="70" cy="70" r="${r}" fill="none" stroke="rgba(126,137,172,.16)" stroke-width="13"/>`+
-    `<circle class="g-${status}" cx="70" cy="70" r="${r}" fill="none" stroke="${grad}" stroke-width="13" stroke-linecap="round" stroke-dasharray="${len.toFixed(1)} ${(c-len).toFixed(1)}" transform="rotate(-90 70 70)"/>`+
+    `<circle class="garc g-${status}" cx="70" cy="70" r="${r}" fill="none" stroke="${grad}" stroke-width="13" stroke-linecap="round" stroke-dasharray="${len.toFixed(1)} ${(c-len).toFixed(1)}" transform="rotate(-90 70 70)"/>`+
     `<text x="70" y="69" text-anchor="middle" class="gv">${esc(valTxt)}</text>`+
     (unit?`<text x="70" y="88" text-anchor="middle" class="gu">${esc(unit)}</text>`:"")+
     `</svg><div class="lab">${esc(label)}</div></div>`;
@@ -289,7 +301,7 @@ const TABS=[["overview","Overview","gauge"],["host","Host","cpu"],["hermes","Her
 function buildNav(){
   const nav=$("nav");nav.innerHTML="";
   TABS.forEach(([id,label,icn],i)=>{
-    const sec=S()[id]; const st=sec?sec.status:null;
+    const sec=secOf(id); const st=sec?sec.status:null;
     const b=document.createElement("button");b.dataset.tab=id;
     b.innerHTML=`${st&&st!=="ok"?`<span class="sd" style="background:${STC[st]}"></span>`:""}${esc(label)}`;
     if(i===0)b.classList.add("active");b.onclick=()=>activate(id);nav.appendChild(b);
@@ -308,57 +320,122 @@ function render(animate){
   if(animate||!sec){$("main").innerHTML=`<section class="tab active">${inner}</section>`;}
   else{sec.innerHTML=inner;}  // in-place on live ticks: no entrance-animation flash
   if(CURRENT==="hermes")wireHermes();
+  if($("cform"))wireChat();  // overview chat (or any view that rendered a chat box)
 }
 // reconcile the nav status dots in place (no rebuild) so live ticks don't flicker the navbar
 function updateNavDots(){
   document.querySelectorAll("#nav button").forEach(b=>{
-    const st=(S()[b.dataset.tab]||{}).status; let dot=b.querySelector(".sd");
+    const st=(secOf(b.dataset.tab)||{}).status; let dot=b.querySelector(".sd");
     if(st&&st!=="ok"){if(!dot){dot=document.createElement("span");dot.className="sd";b.insertBefore(dot,b.firstChild);}dot.style.background=STC[st]||"var(--off)";}
     else if(dot){dot.remove();}
   });
 }
 
-/* ---------- overview ---------- */
+/* ---------- host gauges (shared spec → render + live animate) ---------- */
+function hostGaugeData(d){
+  const g=[];
+  if(d.temp_c!=null)g.push({key:"temp",label:"Temp",val:d.temp_c.toFixed(1),unit:"°C",pct:d.temp_c,status:d.temp_c>=80?"crit":d.temp_c>=70?"warn":"ok"});
+  if(d.cpu_percent!=null)g.push({key:"cpu",label:"CPU",val:d.cpu_percent.toFixed(0),unit:"%",pct:d.cpu_percent,status:d.cpu_percent>=90?"crit":d.cpu_percent>=70?"warn":"ok"});
+  if(d.mem&&d.mem.percent!=null)g.push({key:"mem",label:"Memory",val:d.mem.percent.toFixed(0),unit:"%",pct:d.mem.percent,status:d.mem.percent>=90?"crit":d.mem.percent>=85?"warn":"ok"});
+  if(d.disk&&d.disk.percent!=null)g.push({key:"disk",label:"Disk",val:d.disk.percent.toFixed(0),unit:"%",pct:d.disk.percent,status:d.disk.percent>=95?"crit":d.disk.percent>=85?"warn":"ok"});
+  return g;
+}
 function hostGauges(){
-  const d=(S().system||{}).data||{};const g=[];
-  if(d.temp_c!=null)g.push(gauge("Temp",d.temp_c.toFixed(1),"°C",d.temp_c,(S().system||{}).status==="crit"?"crit":d.temp_c>=70?"warn":"ok"));
-  if(d.cpu_percent!=null)g.push(gauge("CPU",d.cpu_percent.toFixed(0),"%",d.cpu_percent,d.cpu_percent>=90?"crit":d.cpu_percent>=70?"warn":"ok"));
-  if(d.mem&&d.mem.percent!=null)g.push(gauge("Memory",d.mem.percent.toFixed(0),"%",d.mem.percent,d.mem.percent>=90?"crit":d.mem.percent>=85?"warn":"ok"));
-  if(d.disk&&d.disk.percent!=null)g.push(gauge("Disk",d.disk.percent.toFixed(0),"%",d.disk.percent,d.disk.percent>=95?"crit":d.disk.percent>=85?"warn":"ok"));
-  return g.length?`<div class="grid g-gauges" id="ovg">${g.join("")}</div>`:"";
+  const g=hostGaugeData((S().system||{}).data||{});
+  return g.length?`<div class="grid g-gauges" id="ovg">${g.map(x=>gauge(x.label,x.val,x.unit,x.pct,x.status,x.key)).join("")}</div>`:"";
+}
+// animate the existing gauge arcs in place (no re-render → smooth sweep, no flicker)
+function updateHostLive(){
+  hostGaugeData((S().system||{}).data||{}).forEach(x=>{
+    const el=document.querySelector(`.gauge[data-g="${x.key}"]`);if(!el)return;
+    const st=STC[x.status]?x.status:"off",r=52,c=2*Math.PI*r,len=Math.max(0,Math.min(100,x.pct||0))/100*c;
+    const arc=el.querySelector(".garc");
+    if(arc){arc.setAttribute("stroke-dasharray",`${len.toFixed(1)} ${(c-len).toFixed(1)}`);arc.setAttribute("stroke",`url(#gg-${st})`);arc.setAttribute("class",`garc g-${st}`);}
+    const gv=el.querySelector(".gv");if(gv)gv.textContent=x.val;
+  });
+}
+/* ---------- area/line history charts ---------- */
+let HIST=(DATA.history||[]).slice();
+function areaChart(id,vals,color){
+  if(!vals||vals.length<2)return `<div class="muted" style="font-size:12.5px;padding:18px 0">collecting…</div>`;
+  const w=600,h=88,pad=6,mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1,n=vals.length;
+  const X=i=>pad+(i/(n-1))*(w-2*pad),Y=v=>pad+(1-(v-mn)/rng)*(h-2*pad);
+  const line=vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  const area=`${pad},${(h-pad).toFixed(1)} ${line} ${(w-pad).toFixed(1)},${(h-pad).toFixed(1)}`;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">`+
+    `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".34"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>`+
+    `<polygon id="${id}_a" points="${area}" fill="url(#${id})"/>`+
+    `<polyline id="${id}_l" points="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
+}
+const HSERIES=[["temp","Temp","°C","#FDB52A",1],["cpu","CPU","%","#6C72FF",0],["mem","Memory","%","#57C3FF",0]];
+function hostHistory(){
+  if(!HIST||HIST.length<2)return "";
+  let h=`<div class="stitle">${ic("chart")} History</div><div class="grid g-cards">`;
+  HSERIES.forEach(([k,label,unit,color,dp])=>{
+    const vals=HIST.map(s=>s[k]).filter(v=>v!=null);if(vals.length<2)return;
+    const cur=vals[vals.length-1],mn=Math.min(...vals),mx=Math.max(...vals);
+    h+=`<div class="card hist"><div class="hh"><span class="ht">${label}</span><span class="hv num">${cur.toFixed(dp)}${unit}</span></div>`+
+       areaChart("ar_"+k,vals,color)+
+       `<div class="hr">min ${mn.toFixed(dp)}${unit} · max ${mx.toFixed(dp)}${unit} · ${vals.length} samples</div></div>`;
+  });
+  return h+`</div>`;
+}
+function updateHistCharts(){
+  HSERIES.forEach(([k,label,unit,color,dp])=>{
+    const vals=HIST.map(s=>s[k]).filter(v=>v!=null);if(vals.length<2)return;
+    const w=600,h=88,pad=6,mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1,n=vals.length;
+    const X=i=>pad+(i/(n-1))*(w-2*pad),Y=v=>pad+(1-(v-mn)/rng)*(h-2*pad);
+    const line=vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+    const ln=document.getElementById("ar_"+k+"_l"),ar=document.getElementById("ar_"+k+"_a");
+    if(ln)ln.setAttribute("points",line);
+    if(ar)ar.setAttribute("points",`${pad},${(h-pad).toFixed(1)} ${line} ${(w-pad).toFixed(1)},${(h-pad).toFixed(1)}`);
+    const card=ln&&ln.closest(".hist");if(card){const hv=card.querySelector(".hv"),hr=card.querySelector(".hr");
+      if(hv)hv.textContent=vals[vals.length-1].toFixed(dp)+unit;
+      if(hr)hr.textContent=`min ${mn.toFixed(dp)}${unit} · max ${mx.toFixed(dp)}${unit} · ${vals.length} samples`;}
+  });
 }
 function renderOverview(){
-  let h=`<div class="stitle">${ic("gauge")} Host</div>`+(hostGauges()||`<div class="empty">No host metrics.</div>`);
-  // source status cards
-  h+=`<div class="stitle">${ic("layers")} Sources</div><div class="grid g-cards">`;
-  TABS.filter(t=>t[0]!=="overview"&&t[0]!=="host").forEach(([id,label,icn])=>{
-    const s=S()[id];if(!s)return;
-    h+=`<div class="srccard clickable" onclick="activate('${id}')"><div class="h">${ic(icn)}<span class="nm">${esc(label)}</span>${chip(s.status,s.status==="off"?"off":s.status)}</div><div class="sm">${esc(s.summary||"")}</div></div>`;
+  // Sources — every section (Host included) as a clickable status card.
+  let h=`<div class="stitle">${ic("layers")} Sources</div><div class="grid g-cards">`;
+  TABS.filter(t=>t[0]!=="overview").forEach(([id,label,icn])=>{
+    const s=secOf(id);if(!s)return;
+    h+=`<div class="srccard clickable" data-src="${id}" onclick="activate('${id}')"><div class="h">${ic(icn)}<span class="nm">${esc(label)}</span>${chip(s.status,s.status==="off"?"off":s.status)}</div><div class="sm">${esc(s.summary||"")}</div></div>`;
   });
   h+=`</div>`;
-  // recommended next steps from Hermes hygiene
-  const ag=A();
-  if(ag&&ag.hygiene&&ag.hygiene.findings){
-    const sevr=["critical","high","medium","low","info"];
-    const recs=[],seen=new Set();
-    ag.hygiene.findings.slice().sort((a,b)=>sevr.indexOf(a.severity)-sevr.indexOf(b.severity)).forEach(f=>{if(f.remediation&&!seen.has(f.remediation)){seen.add(f.remediation);recs.push(f);}});
-    if(recs.length){h+=`<div class="stitle">${ic("check")} Recommended next steps</div><div class="card">`+recs.slice(0,6).map(f=>`<div class="rec">${dot(f.severity==="critical"?"crit":f.severity==="high"?"warn":"off")}<div><div class="rt">${esc(f.remediation)}</div><div class="rm">${esc(f.title)}</div></div></div>`).join("")+`</div>`;}
-  }
+  // Chat with Hermes (replaces the old recommended-next-steps panel).
+  if(LIVE&&DATA.meta&&DATA.meta.chat&&(S().hermes||{}).available)
+    h+=`<div class="stitle">${ic("brain")} Chat with Hermes</div>`+renderChat();
   return h;
+}
+// live, in-place refresh of the Host source card on the overview (SSE only sends host)
+function updateOverviewLive(){
+  const s=S().system,card=document.querySelector('.srccard[data-src="host"]');
+  if(!s||!card)return;
+  const sm=card.querySelector(".sm");if(sm)sm.textContent=s.summary||"";
+  const ch=card.querySelector(".chip");if(ch){const t=s.status==="off"?"off":s.status;ch.className="chip "+s.status;ch.innerHTML=`<span class="d"></span>${t}`;}
 }
 
 /* ---------- host ---------- */
+function hostStats(d){
+  const stats=[];
+  if(d.load&&d.load[0]!=null)stats.push(["load","Load (1m)",d.load[0].toFixed(2)]);
+  if(d.cores!=null)stats.push(["cores","Cores",String(d.cores)]);
+  if(d.mem)stats.push(["mem","Memory",fmtBytes(d.mem.used)+" / "+fmtBytes(d.mem.total)]);
+  if(d.disk)stats.push(["disk","Disk",fmtBytes(d.disk.used)+" / "+fmtBytes(d.disk.total)]);
+  if(d.uptime_s!=null)stats.push(["uptime","Uptime",fmtUp(d.uptime_s)]);
+  return stats.length?`<div class="grid g-stats" style="margin-top:16px">`+stats.map(([k,l,v])=>`<div class="stat" data-st="${k}"><div class="n num">${esc(v)}</div><div class="l">${esc(l)}</div></div>`).join("")+`</div>`:"";
+}
+function updateHostStats(){
+  const d=(S().system||{}).data||{},set=(k,v)=>{const e=document.querySelector(`.stat[data-st="${k}"] .n`);if(e&&v!=null)e.textContent=v;};
+  if(d.load&&d.load[0]!=null)set("load",d.load[0].toFixed(2));
+  if(d.mem)set("mem",fmtBytes(d.mem.used)+" / "+fmtBytes(d.mem.total));
+  if(d.disk)set("disk",fmtBytes(d.disk.used)+" / "+fmtBytes(d.disk.total));
+  if(d.uptime_s!=null)set("uptime",fmtUp(d.uptime_s));
+}
 function renderHost(){
   const s=S().system||{},d=s.data||{};
   let h=`<div class="stitle">${ic("cpu")} ${esc(d.model||"Host")} ${s.status&&s.status!=="ok"?sevpill(s.status):""}</div>`;
-  h+=hostGauges();
-  const stats=[];
-  if(d.load&&d.load[0]!=null)stats.push(["Load (1m)",d.load[0].toFixed(2)]);
-  if(d.cores!=null)stats.push(["Cores",d.cores]);
-  if(d.mem)stats.push(["Memory",fmtBytes(d.mem.used)+" / "+fmtBytes(d.mem.total)]);
-  if(d.disk)stats.push(["Disk",fmtBytes(d.disk.used)+" / "+fmtBytes(d.disk.total)]);
-  if(d.uptime_s!=null)stats.push(["Uptime",fmtUp(d.uptime_s)]);
-  if(stats.length)h+=`<div class="grid g-stats" style="margin-top:14px">`+stats.map(([l,v])=>`<div class="stat"><div class="n num">${esc(v)}</div><div class="l">${esc(l)}</div></div>`).join("")+`</div>`;
+  h+=hostGauges()+hostStats(d)+hostHistory();
   if(d.throttle){const t=d.throttle;h+=`<div class="stitle">${ic("alert")} Power / throttle</div><div class="card"><div class="kv"><span class="k">state</span><span class="v">${t.now?'<span class="tag warn">throttled now</span>':t.ever?'<span class="tag warn">under-voltage / throttle in history</span>':'<span class="tag">healthy</span>'}</span></div>`+(t.flags&&t.flags.length?`<div class="kv"><span class="k">flags</span><span class="v">${t.flags.map(f=>`<span class="tag">${esc(f)}</span>`).join("")}</span></div>`:"")+`</div>`;}
   return h;
 }
@@ -401,25 +478,33 @@ function renderHermes(){
 function wireHermes(){document.querySelectorAll(".subnav button").forEach(b=>b.onclick=()=>{HSUB=b.dataset.sub;document.querySelectorAll(".subnav button").forEach(x=>x.classList.toggle("active",x===b));$("hsub").innerHTML=renderHermesSub();if(HSUB==="graph")initAgentGraph();if(HSUB==="timeline")wireTimeline();if(HSUB==="chat")wireChat();});if(HSUB==="chat")wireChat();}
 /* ---------- chat with Hermes (live server only, opt-in) ---------- */
 let CHATLOG=[];
+try{const _s=localStorage.getItem("insikt_chat");if(_s)CHATLOG=JSON.parse(_s)||[];}catch(e){}  // persists across refreshes
+function saveChat(){try{localStorage.setItem("insikt_chat",JSON.stringify(CHATLOG.slice(-100)));}catch(e){}}
 const chatBubble=m=>`<div class="cmsg ${m.role}${m.pending?" pending":""}"><div class="cb">${esc(m.text)}</div></div>`;
+const _cempty='<div class="cempty">Ask your Hermes instance anything — replies run on the Pi.</div>';
 function renderChat(){
-  return `<div class="chat"><div class="clog" id="clog">${CHATLOG.length?CHATLOG.map(chatBubble).join(""):'<div class="cempty">Ask your Hermes instance anything — replies run on the Pi.</div>'}</div>`+
-    `<form class="cform" id="cform"><input id="cin" placeholder="Message Hermes…" autocomplete="off" maxlength="4000"><button type="submit" id="csend">Send</button></form></div>`;
+  return `<div class="chat">`+
+    `<div class="clog" id="clog">${CHATLOG.length?CHATLOG.map(chatBubble).join(""):_cempty}</div>`+
+    `<form class="cform" id="cform"><input id="cin" placeholder="Message Hermes…" autocomplete="off" maxlength="4000"><button type="submit" id="csend">Send</button></form>`+
+    `<button type="button" class="cclear" id="cclear" style="${CHATLOG.length?"":"display:none"}">Clear conversation</button>`+
+    `</div>`;
 }
-function redrawChat(){const c=$("clog");if(c){c.innerHTML=CHATLOG.map(chatBubble).join("");c.scrollTop=c.scrollHeight;}}
+function redrawChat(){const c=$("clog");if(c){c.innerHTML=CHATLOG.length?CHATLOG.map(chatBubble).join(""):_cempty;c.scrollTop=c.scrollHeight;}
+  const clr=$("cclear");if(clr)clr.style.display=CHATLOG.length?"":"none";}
 function wireChat(){
   const form=$("cform");if(!form)return;
-  const inp=$("cin"),btn=$("csend");
+  const inp=$("cin"),btn=$("csend"),clr=$("cclear");
   form.onsubmit=async e=>{e.preventDefault();const msg=(inp.value||"").trim();if(!msg)return;
     CHATLOG.push({role:"you",text:msg});CHATLOG.push({role:"hermes",text:"thinking…",pending:true});
-    inp.value="";inp.disabled=btn.disabled=true;redrawChat();
+    inp.value="";inp.disabled=btn.disabled=true;saveChat();redrawChat();
     try{
       const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:msg})});
       const d=await r.json().catch(()=>({}));
       CHATLOG[CHATLOG.length-1]={role:"hermes",text:(d&&(d.reply||d.message||d.error))||"(no reply)"};
     }catch(err){CHATLOG[CHATLOG.length-1]={role:"hermes",text:"(request failed — is the agent reachable?)"};}
-    inp.disabled=btn.disabled=false;redrawChat();inp.focus();
+    inp.disabled=btn.disabled=false;saveChat();redrawChat();inp.focus();
   };
+  if(clr)clr.onclick=()=>{CHATLOG=[];saveChat();redrawChat();};
   inp&&inp.focus();
 }
 function renderHermesSub(){
@@ -512,14 +597,21 @@ function initAgentGraph(){
 }
 
 /* ---------- live (SSE) ---------- */
+function pushHist(host){
+  const d=(host&&host.data)||{};
+  HIST.push({t:DATA.meta.generated,temp:d.temp_c,cpu:d.cpu_percent,mem:d.mem&&d.mem.percent,disk:d.disk&&d.disk.percent});
+  if(HIST.length>360)HIST.shift();
+}
 function startLive(){
   if(!LIVE||!window.EventSource)return;
   try{
     const es=new EventSource("/events");
-    es.onmessage=ev=>{try{const m=JSON.parse(ev.data);if(m.host)DATA.sections.system=m.host;if(m.status)DATA.status=m.status;if(m.generated)DATA.meta.generated=m.generated;
-      renderBar();
-      updateNavDots();
-      if(CURRENT==="overview"||CURRENT==="host")render(false);  // in-place, no flicker
+    es.onmessage=ev=>{try{const m=JSON.parse(ev.data);
+      if(m.host){DATA.sections.system=m.host;pushHist(m.host);}
+      if(m.status)DATA.status=m.status;if(m.generated)DATA.meta.generated=m.generated;
+      renderBar();updateNavDots();updateHostLive();   // gauges animate in place
+      if(CURRENT==="host"){updateHostStats();updateHistCharts();}
+      else if(CURRENT==="overview")updateOverviewLive();
     }catch(e){}};
   }catch(e){}
 }

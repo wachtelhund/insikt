@@ -15,7 +15,7 @@ Read-only and local by default. Insikt reports **counts, versions, health and
 metrics** — never coordinates, entity names, peer names, memory contents, or
 secret values. Credential key *names* are read; key *material* never is.
 
-![Overview](docs/overview.png)
+![Insikt — Host](docs/host.png)
 
 ## Install
 
@@ -120,9 +120,9 @@ questions:
 
 ## What it looks like
 
-| Hygiene | Capability graph |
-|---|---|
-| ![Hygiene](docs/hygiene.png) | ![Graph](docs/graph.png) |
+| Overview | Hygiene | Capability graph |
+|---|---|---|
+| ![Overview](docs/overview.png) | ![Hygiene](docs/hygiene.png) | ![Graph](docs/graph.png) |
 
 ## Docs
 

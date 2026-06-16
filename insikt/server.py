@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
@@ -36,10 +37,24 @@ class StateCache:
         self._sys = SystemCollector(profile)  # persistent → real CPU% deltas
         self._stop = threading.Event()
         self._state = collect_state(profile, system_collector=self._sys)
+        # in-memory ring buffer of recent host samples for the history charts
+        # (~30 min at the default 5s cadence; resets on restart).
+        self._history: deque = deque(maxlen=360)
+        self._history.append(self._sample())
+
+    def _sample(self) -> dict:
+        d = (self._state["sections"].get("system") or {}).get("data") or {}
+        return {
+            "t": self._state["meta"].get("generated"),
+            "temp": d.get("temp_c"),
+            "cpu": d.get("cpu_percent"),
+            "mem": (d.get("mem") or {}).get("percent"),
+            "disk": (d.get("disk") or {}).get("percent"),
+        }
 
     def state(self) -> dict:
         with self._lock:
-            return self._state
+            return {**self._state, "history": list(self._history)}
 
     def host(self) -> dict:
         with self._lock:
@@ -55,6 +70,7 @@ class StateCache:
             self._state["sections"]["system"] = sec
             self._state["status"] = self._rollup(self._state["sections"])
             self._state["meta"]["generated"] = _now()
+            self._history.append(self._sample())
 
     def _refresh_full(self) -> None:
         st = collect_state(self.profile, system_collector=self._sys)

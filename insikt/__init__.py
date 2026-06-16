@@ -1,12 +1,12 @@
-"""Insikt — local-first, read-only auditor for self-hosted AI agents.
+"""Insikt — local-first, read-only observability dashboard for a self-hosted AI homelab.
 
-Collectors read an agent's on-disk state, normalize it into one graph + action
-timeline (``insikt.model``), persist append-only snapshots (``insikt.store``),
-and expose the result as a self-contained HTML report (``insikt.report``) and a
-read-only MCP server (``insikt.mcp_server``).
+Collectors read each source (Raspberry Pi host metrics, a Hermes agent, optional
+Honcho + Home Assistant) into one normalized ``Section`` (``insikt.collectors``);
+``insikt.state.collect_state`` assembles them into one whole-system state that
+feeds the offline HTML dashboard (``insikt.report``), the live read-only web
+server (``insikt.server``), and the read-only MCP toolset (``insikt.mcp_server``).
 
-Everything below the collector layer is framework-agnostic: new agent support is
-one new collector and nothing else changes.
+Adding a source is one new ``Collector``; everything downstream is source-agnostic.
 """
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"

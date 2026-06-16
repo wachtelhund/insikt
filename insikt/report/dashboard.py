@@ -181,7 +181,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .shead .st{font-weight:680;font-size:15px;display:flex;align-items:center;gap:8px}
   .mx{flex:0 0 auto;background:var(--sc2);border:none;color:var(--on2);width:32px;height:32px;border-radius:9px;cursor:pointer;font-size:14px}
   .mx:hover{color:var(--on);background:var(--sc3)}
-  .bigchart .spark{height:230px;margin:0 0 16px}
+  .bigwrap{position:relative;height:230px;padding-left:48px;margin:4px 0 0}
+  .bigwrap .spark.big{height:230px;margin:0}
+  .chgrid{position:absolute;left:0;right:0;top:0;height:230px;pointer-events:none}
+  .gridrow{position:absolute;left:48px;right:0;border-top:1px dashed rgba(126,137,172,.16)}
+  .gridrow .yl{position:absolute;left:-48px;top:0;transform:translateY(-50%);width:42px;text-align:right;font-size:10.5px;color:var(--on3)}
+  .xlabels{display:flex;justify-content:space-between;color:var(--on3);font-size:11px;padding-left:48px;margin:8px 0 18px}
 
   /* timeline + table + graph (Hermes subviews) */
   .ev{display:flex;gap:14px;padding:13px 0}
@@ -212,20 +217,20 @@ _TEMPLATE = r"""<!DOCTYPE html>
   code{background:var(--sc2);padding:1px 6px;border-radius:6px;font-size:12px;overflow-wrap:anywhere;word-break:break-word}
 
   /* chat with Hermes */
-  .chat{display:flex;flex-direction:column;gap:12px}
-  .clog{display:flex;flex-direction:column;gap:10px;max-height:54vh;overflow-y:auto;padding:2px}
-  .cempty{color:var(--on3);text-align:center;padding:34px 16px}
+  .chat{display:flex;flex-direction:column;gap:12px;height:min(520px,68vh);background:var(--sc);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+  .clog{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;overflow-y:auto;padding:2px 4px}
+  .cempty{color:var(--on3);text-align:center;margin:auto;padding:16px}
   .cmsg{display:flex}.cmsg.you{justify-content:flex-end}
   .cmsg .cb{max-width:82%;padding:10px 13px;border-radius:14px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
   .cmsg.you .cb{background:var(--grad);color:#fff;border-bottom-right-radius:4px}
   .cmsg.hermes .cb{background:var(--sc2);color:var(--on);border:1px solid var(--line);border-bottom-left-radius:4px}
   .cmsg.pending .cb{color:var(--on3)}
-  .cform{display:flex;gap:9px}
+  .cform{flex:0 0 auto;display:flex;gap:9px}
   .cform input{flex:1;min-width:0;background:var(--sc);color:var(--on);border:1px solid var(--line);border-radius:var(--r3);padding:11px 14px;font-size:14px;min-height:46px}
   .cform input:focus{outline:none;border-color:var(--primary)}
   .cform button{background:var(--grad);color:#fff;border:none;border-radius:var(--r3);padding:0 22px;font-weight:600;font-size:14px;cursor:pointer;min-height:46px}
   .cform button:disabled{opacity:.5;cursor:default}
-  .cclear{align-self:flex-start;background:none;border:none;color:var(--on3);font-size:12px;cursor:pointer;padding:2px 0}
+  .cclear{display:block;margin-top:10px;background:none;border:none;color:var(--on3);font-size:12px;cursor:pointer;padding:0}
   .cclear:hover{color:var(--on2);text-decoration:underline}
 
   @media (max-width:560px){
@@ -405,27 +410,29 @@ function areaChart(id,vals,color){
     `<polyline id="${id}_l" points="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
 }
 const HSERIES=[["temp","Temp","°C","#FDB52A",1],["cpu","CPU","%","#6C72FF",0],["mem","Memory","%","#57C3FF",0]];
+const SMALL_N=30;  // small host charts show at most the last 30 samples
 const _vals=k=>HIST.map(s=>s[k]).filter(v=>v!=null);
+const _recent=k=>_vals(k).slice(-SMALL_N);
 function hostHistory(){
   if(!HIST||HIST.length<2)return "";
   let h=`<div class="stitle">${ic("chart")} History <span class="hint">tap a chart for detail</span></div><div class="grid g-cards">`;
   HSERIES.forEach(([k,label,unit,color,dp])=>{
-    const vals=_vals(k);if(vals.length<2)return;
+    const vals=_recent(k);if(vals.length<2)return;
     const cur=vals[vals.length-1],mn=Math.min(...vals),mx=Math.max(...vals);
     h+=`<div class="card hist clickable" data-k="${k}" onclick="openMetric('${k}')"><div class="hh"><span class="ht">${label}</span><span class="hv num">${cur.toFixed(dp)}${unit}</span></div>`+
        areaChart("ar_"+k,vals,color)+
-       `<div class="hr">min ${mn.toFixed(dp)}${unit} · max ${mx.toFixed(dp)}${unit} · ${vals.length} samples</div></div>`;
+       `<div class="hr">min ${mn.toFixed(dp)}${unit} · max ${mx.toFixed(dp)}${unit} · last ${vals.length}</div></div>`;
   });
   return h+`</div>`;
 }
 function updateHistCharts(){
   HSERIES.forEach(([k,label,unit,color,dp])=>{
-    const vals=_vals(k);if(vals.length<2)return;
+    const vals=_recent(k);if(vals.length<2)return;
     tweenChart("ar_"+k,_cpts(vals));
     const card=document.querySelector(`.hist[data-k="${k}"]`);
     if(card){const mn=Math.min(...vals),mx=Math.max(...vals),hv=card.querySelector(".hv"),hr=card.querySelector(".hr");
       if(hv)hv.textContent=vals[vals.length-1].toFixed(dp)+unit;
-      if(hr)hr.textContent=`min ${mn.toFixed(dp)}${unit} · max ${mx.toFixed(dp)}${unit} · ${vals.length} samples`;}
+      if(hr)hr.textContent=`min ${mn.toFixed(dp)}${unit} · max ${mx.toFixed(dp)}${unit} · last ${vals.length}`;}
   });
   if(OPENM)refreshModal();
 }
@@ -434,21 +441,40 @@ let OPENM=null;
 function openMetric(k){const m=HSERIES.find(s=>s[0]===k);if(!m)return;OPENM=k;
   $("sheet").innerHTML=metricSheet(m);$("modal").hidden=false;document.body.style.overflow="hidden";}
 function closeModal(){OPENM=null;$("modal").hidden=true;document.body.style.overflow="";}
+function _spanLabel(n){const r=(DATA.meta&&DATA.meta.refresh)||5,s=(n-1)*r,m=Math.round(s/60);return m>=1?`${m} min ago`:`${s}s ago`;}
+function _gridRows(mn,mx,rng,unit,dp){let r="";const T=4;
+  for(let i=0;i<=T;i++){const tv=mn+rng*(i/T),Yv=CPAD+(1-(tv-mn)/rng)*(CH-2*CPAD);
+    r+=`<div class="gridrow" style="top:${(Yv/CH*100).toFixed(2)}%"><span class="yl">${tv.toFixed(dp)}${unit}</span></div>`;}
+  return r;}
+// large, gridded, labelled, animatable chart for the detail modal
+function bigChart(id,vals,color,unit,dp){
+  const mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1,pts=_cpts(vals),line=_ptsStr(pts);
+  CHARTPTS[id]=pts;
+  return `<div class="bigwrap"><div class="chgrid" id="grid_${id}">${_gridRows(mn,mx,rng,unit,dp)}</div>`+
+    `<svg class="spark big" viewBox="0 0 ${CW} ${CH}" preserveAspectRatio="none">`+
+      `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".30"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>`+
+      `<polygon id="${id}_a" points="${CPAD},${CH-CPAD} ${line} ${CW-CPAD},${CH-CPAD}" fill="url(#${id})"/>`+
+      `<polyline id="${id}_l" points="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`+
+    `</svg></div><div class="xlabels" id="xl_${id}"><span>${_spanLabel(vals.length)}</span><span>now</span></div>`;
+}
 function metricSheet(m){
   const [k,label,unit,color,dp]=m,vals=_vals(k);
   const head=`<div class="shead"><span class="st">${ic("chart")} ${esc(label)} — history</span><button class="mx" onclick="closeModal()" aria-label="Close">✕</button></div>`;
   if(vals.length<2)return head+`<div class="empty">Not enough history yet — give it a moment.</div>`;
   const cur=vals[vals.length-1],mn=Math.min(...vals),mx=Math.max(...vals),avg=vals.reduce((a,b)=>a+b,0)/vals.length;
   const tiles=[["Current",cur],["Min",mn],["Max",mx],["Average",avg]];
-  return head+`<div class="bigchart">${areaChart("mar_"+k,vals,color)}</div>`+
+  return head+bigChart("mar_"+k,vals,color,unit,dp)+
     `<div class="grid g-stats">`+tiles.map(([l,v])=>`<div class="stat"><div class="n num" style="color:${color}">${v.toFixed(dp)}${esc(unit)}</div><div class="l">${esc(l)}</div></div>`).join("")+
     `<div class="stat"><div class="n num">${vals.length}</div><div class="l">Samples</div></div></div>`;
 }
 function refreshModal(){if(!OPENM)return;const m=HSERIES.find(s=>s[0]===OPENM);if(!m)return;
-  const [k,label,unit,color,dp]=m,vals=_vals(k);if(vals.length<2)return;
-  _applyChart("mar_"+k,_cpts(vals));
+  const [k,label,unit,color,dp]=m,vals=_vals(k);if(vals.length<2)return;const id="mar_"+k;
+  tweenChart(id,_cpts(vals));   // animate the expanded chart too
+  const mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1;
+  const g=document.getElementById("grid_"+id);if(g)g.innerHTML=_gridRows(mn,mx,rng,unit,dp);
+  const xl=document.getElementById("xl_"+id);if(xl){const sp=xl.querySelector("span");if(sp)sp.textContent=_spanLabel(vals.length);}
   const ns=$("sheet")?$("sheet").querySelectorAll(".g-stats .stat .n"):[];
-  if(ns.length>=5){const cur=vals[vals.length-1],mn=Math.min(...vals),mx=Math.max(...vals),avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+  if(ns.length>=5){const cur=vals[vals.length-1],avg=vals.reduce((a,b)=>a+b,0)/vals.length;
     [cur,mn,mx,avg].forEach((v,i)=>ns[i].textContent=v.toFixed(dp)+unit);ns[4].textContent=vals.length;}
 }
 function renderOverview(){
@@ -543,8 +569,8 @@ function renderChat(){
   return `<div class="chat">`+
     `<div class="clog" id="clog">${CHATLOG.length?CHATLOG.map(chatBubble).join(""):_cempty}</div>`+
     `<form class="cform" id="cform"><input id="cin" placeholder="Message Hermes…" autocomplete="off" maxlength="4000"><button type="submit" id="csend">Send</button></form>`+
-    `<button type="button" class="cclear" id="cclear" style="${CHATLOG.length?"":"display:none"}">Clear conversation</button>`+
-    `</div>`;
+    `</div>`+
+    `<button type="button" class="cclear" id="cclear" style="${CHATLOG.length?"":"display:none"}">Clear conversation</button>`;
 }
 function redrawChat(){const c=$("clog");if(c){c.innerHTML=CHATLOG.length?CHATLOG.map(chatBubble).join(""):_cempty;c.scrollTop=c.scrollHeight;}
   const clr=$("cclear");if(clr)clr.style.display=CHATLOG.length?"":"none";}

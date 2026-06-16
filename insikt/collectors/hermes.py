@@ -32,7 +32,7 @@ from typing import Optional
 
 import yaml
 
-from ..model import ActionType, Graph, NodeType, Rel, Source, action_id, make_id
+from ..model import ActionType, Graph, NodeType, Rel, ResourceKind, Source, ToolKind, action_id, make_id
 from ..profiles import load_profile, scoped
 from ..redact import redact_secrets
 from .base import Collector, CollectorResult
@@ -55,12 +55,12 @@ def _credential_scope(name: str) -> str:
 def _resource_kind(value: str) -> str:
     v = value.strip()
     if v.startswith(("http://", "https://")):
-        return "api"
+        return ResourceKind.API
     if v.startswith(("/", "~", "./", "../")):
-        return "fs_path"
+        return ResourceKind.FS_PATH
     if "/" not in v and ("." in v or ":" in v):
-        return "host"
-    return "fs_path"
+        return ResourceKind.HOST
+    return ResourceKind.FS_PATH
 
 
 def _read_jsonl(path: Path) -> tuple[list[dict], int]:
@@ -318,10 +318,10 @@ class HermesCollector(Collector):
                 g.add_edge(sid, Rel.REQUIRES, tid)
         hosts = extract_hosts(body)
         if "network" in caps or hosts:
-            web = g.node(NodeType.TOOL, "web", name, label="web", kind="web")
+            web = g.node(NodeType.TOOL, ToolKind.WEB, name, label="web", kind=ToolKind.WEB)
             g.add_edge(sid, Rel.REQUIRES, web)
             for host in sorted(hosts):
-                rid = g.node(NodeType.RESOURCE, "host", host, label=host, kind="host", value=host)
+                rid = g.node(NodeType.RESOURCE, ResourceKind.HOST, host, label=host, kind=ResourceKind.HOST, value=host)
                 g.add_edge(web, Rel.CAN_ACCESS, rid)
         # credential reads: env-style names that literally appear in the body
         for cn in cred_names:
@@ -352,10 +352,10 @@ class HermesCollector(Collector):
             name = str(job.get("name") or job.get("id") or "cron job")
             ts = job.get("last_run_at") or job.get("created_at")
             model_id = self._model_node(g, job.get("model"), job.get("provider"))
-            tail = action_id(FRAMEWORK, ts or "", "scheduled_run", name, "", str(job.get("id"))).split(":", 1)[1]
+            tail = action_id(FRAMEWORK, ts or "", ActionType.SCHEDULED_RUN.value, name, "", str(job.get("id"))).split(":", 1)[1]
             nid = g.node(
                 NodeType.ACTION, tail, label=f"scheduled_run: {name}", ts=_as_iso(ts),
-                type="scheduled_run", agent_id=agent_id, payload_summary=name,
+                type=ActionType.SCHEDULED_RUN.value, agent_id=agent_id, payload_summary=name,
                 schedule=_dig(job, "schedule.display") or job.get("schedule_display"),
                 enabled=job.get("enabled"), last_status=job.get("last_status"),
                 model_id=model_id, source=Source.BACKFILL.value, nonstandard_type=True,

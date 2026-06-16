@@ -8,12 +8,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from ..model import Finding, Graph, NodeType, Rel, RiskScore, Severity
+from ..model import Finding, FindingKind, Graph, NodeType, Rel, RiskScore, Severity
 from . import rules
 
 # Capability categories that together form the "exfil triad" (README §6).
 _EXFIL_TRIAD = {"shell", "network", "credential_read"}
 _RISKY_DECLARED_TOOLS = {"shell", "web", "network", "messaging"}
+
+# Finding id-prefix -> how to read it. The single source of truth for the
+# capability/config/alert classification (consumers read Finding.kind, never the
+# id prefix).
+_FINDING_KIND = {
+    "fp": FindingKind.ALERT, "drift": FindingKind.ALERT,
+    "posture": FindingKind.CONFIG, "stranger": FindingKind.CONFIG,
+    "exposure": FindingKind.CONFIG, "overlay": FindingKind.CONFIG,
+    "cap": FindingKind.CAPABILITY, "egress": FindingKind.CAPABILITY, "triad": FindingKind.CAPABILITY,
+}
+
+
+def finding_kind(finding_id: str) -> str:
+    return _FINDING_KIND.get(str(finding_id).split(":", 1)[0], FindingKind.CAPABILITY)
 
 
 def _is_wildcard_bind(bind: str) -> bool:
@@ -80,6 +94,8 @@ class HygieneEngine:
         findings.extend(self._scan_posture(graph))
         findings.extend(self._scan_drift(graph, drift))
 
+        for f in findings:
+            f.kind = finding_kind(f.id)
         self._annotate(graph, findings)
         scores = self._score(graph, findings)
         return HygieneResult(findings=findings, scores=scores)

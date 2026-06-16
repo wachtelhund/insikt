@@ -56,6 +56,37 @@ class ActionType(str, Enum):
     SKILL_WRITTEN = "skill_written"
     MODEL_CALL = "model_call"
     MCP_CALL = "mcp_call"
+    SCHEDULED_RUN = "scheduled_run"
+    SUBAGENT_RUN = "subagent_run"
+
+
+class ResourceKind:
+    """``Resource.props['kind']`` values — string constants, not magic literals."""
+
+    HOST = "host"
+    FS_PATH = "fs_path"
+    API = "api"
+    MCP_SERVER = "mcp_server"
+    MEMORY = "memory"
+
+
+class ToolKind:
+    """``Tool.props['kind']`` values."""
+
+    SHELL = "shell"
+    WEB = "web"
+    FILE = "file"
+    MCP = "mcp"
+
+
+class FindingKind:
+    """How to read a hygiene finding (drives the report's colour + the
+    capability-vs-incident messaging). Set on every Finding by the engine so
+    consumers never re-derive it from the id prefix."""
+
+    CAPABILITY = "capability"  # what a skill could do
+    CONFIG = "config"          # a setting worth knowing (exposure/posture)
+    ALERT = "alert"            # a verified problem
 
 
 class Source(str, Enum):
@@ -246,6 +277,7 @@ class Finding:
     agent_id: Optional[str] = None
     factors: list[str] = field(default_factory=list)
     remediation: Optional[str] = None  # a concrete suggested next step (README §6)
+    kind: str = FindingKind.CAPABILITY  # capability / config / alert (set by the engine)
 
     def to_dict(self) -> dict:
         return {
@@ -257,6 +289,7 @@ class Finding:
             "agent_id": self.agent_id,
             "factors": list(self.factors),
             "remediation": self.remediation,
+            "kind": self.kind,
         }
 
 

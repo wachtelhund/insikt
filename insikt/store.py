@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .model import Edge, Graph, Node, NodeType, Rel
+from .model import Edge, Graph, Node, NodeType, Rel, ToolKind
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -227,7 +227,7 @@ class Store:
 
 
 # --- pure diff over two graphs (no store needed) --------------------------
-_RISKY_TOOL_KINDS = {"shell", "web"}
+_RISKY_TOOL_KINDS = {ToolKind.SHELL, ToolKind.WEB}
 
 
 def _skill_label(g: Graph, skill_id: str) -> str:

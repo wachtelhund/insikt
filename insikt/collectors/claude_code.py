@@ -28,7 +28,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Optional
 
-from ..model import ActionType, Graph, NodeType, Rel, Source, action_id, make_id
+from ..model import ActionType, Graph, NodeType, Rel, ResourceKind, Source, ToolKind, action_id, make_id
 from ..profiles import load_profile, scoped
 from ..redact import redact_list, redact_secrets
 from .base import Collector, CollectorResult
@@ -45,7 +45,7 @@ _TOOL_ACTION = {
     "NotebookEdit": ActionType.FILE_WRITE.value,
     "WebFetch": "web",
     "WebSearch": "web",
-    "Task": "subagent_run",
+    "Task": ActionType.SUBAGENT_RUN.value,
 }
 _SKILL_KIND = {"skills": "skill", "commands": "command", "agents": "subagent"}
 
@@ -166,9 +166,9 @@ class ClaudeCodeCollector(Collector):
             names[name] = {"command": (spec or {}).get("command")}
         if not names:
             return
-        mcp_tool = g.node(NodeType.TOOL, "mcp", FRAMEWORK, label="mcp", kind="mcp")
+        mcp_tool = g.node(NodeType.TOOL, ToolKind.MCP, FRAMEWORK, label="mcp", kind=ToolKind.MCP)
         for name, info in names.items():
-            rid = g.node(NodeType.RESOURCE, "mcp_server", name, label=name, kind="mcp_server",
+            rid = g.node(NodeType.RESOURCE, ResourceKind.MCP_SERVER, name, label=name, kind=ResourceKind.MCP_SERVER,
                          value=name, needs_auth=info.get("needs_auth"),
                          command=redact_secrets(info.get("command")))
             g.add_edge(mcp_tool, Rel.CAN_ACCESS, rid)

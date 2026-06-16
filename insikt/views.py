@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .model import Graph, NodeType, Rel
+from .model import Graph, NodeType, Rel, ResourceKind
 from .redact import redact_secrets
 from .timewindow import in_window, parse_window
 
@@ -83,7 +83,7 @@ def capability_surface(graph: Graph, agent: Optional[str] = None) -> dict:
         (
             {"name": r.props.get("value", r.label), "command": r.props.get("command")}
             for r in graph.by_type(NodeType.RESOURCE)
-            if r.props.get("kind") == "mcp_server"
+            if r.props.get("kind") == ResourceKind.MCP_SERVER
         ),
         key=lambda s: s["name"],
     )

@@ -80,6 +80,26 @@ def test_graph_annotated_with_risk(hermes_graph):
     assert hermes_graph.get(BACKUP).props.get("risk") == "critical"
 
 
+def test_findings_carry_kind(hermes_graph):
+    from insikt.hygiene.engine import finding_kind
+    from insikt.model import FindingKind
+
+    res = _scan(hermes_graph, feed=load_advisory_feed(FEED_PATH))
+    kinds = {f.id: f.kind for f in res.findings}
+    assert kinds[f"fp:{BACKUP}"] == FindingKind.ALERT
+    assert kinds[f"triad:{PI}"] == FindingKind.CAPABILITY
+    assert any(k == FindingKind.CONFIG for k in kinds.values())  # posture / stranger
+    # the prefix->kind map is the single source of truth
+    assert finding_kind("posture:tirith_enabled:agent:hermes:main") == FindingKind.CONFIG
+    assert finding_kind("egress:x") == FindingKind.CAPABILITY
+
+
+def test_findings_have_remediation(hermes_graph):
+    res = _scan(hermes_graph, feed=load_advisory_feed(FEED_PATH))
+    fp = [f for f in res.findings if f.id == f"fp:{BACKUP}"][0]
+    assert fp.remediation and "quarantine" in fp.remediation.lower()
+
+
 def test_drift_finding():
     from insikt.model import Graph
 

@@ -298,10 +298,10 @@ const I={
 };
 const ic=n=>`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[n]||""}</svg>`;
 
-function fclass(id){const p=String(id).split(":")[0];
-  if(p==="fp"||p==="drift")return{k:"alert",label:"alert"};
-  if(p==="posture"||p==="stranger"||p==="exposure"||p==="overlay")return{k:"cfg",label:"config"};
-  return{k:"cap",label:"capability"};}
+// Finding.kind comes straight from the engine (capability / config / alert);
+// the report never re-derives it. KINDCLS maps it to the tag CSS class.
+const KINDCLS={capability:"cap",config:"cfg",alert:"alert"};
+const fkind=f=>f.kind||"capability";
 const SKILLUSE={};
 (DATA.capability.agents||[]).forEach(a=>(a.skills||[]).forEach(s=>{SKILLUSE[s.id]={u:s.use_count};}));
 function useBadge(id){const x=SKILLUSE[id];if(!x)return"";
@@ -360,7 +360,7 @@ function activate(id){
 (function(){
   const s=DATA.summary,root=$("tab-overview");
   const acts=DATA.timeline.count||0;
-  const worst=(DATA.hygiene.findings||[]).filter(f=>fclass(f.id).k==="alert"||f.severity==="critical"||f.severity==="high");
+  const worst=(DATA.hygiene.findings||[]).filter(f=>fkind(f)==="alert"||f.severity==="critical"||f.severity==="high");
   const neverUsed=Object.values(SKILLUSE).filter(x=>x.u===0).length;
   let hero;
   if(!worst.length){
@@ -377,7 +377,7 @@ function activate(id){
   const byType=DATA.timeline.by_type||{};
   const actSegs=Object.keys(byType).map((t,i)=>({label:t.replace(/_/g," "),value:byType[t],color:PALETTE[i%PALETTE.length]}));
   const kinds={capability:0,config:0,alert:0};
-  (DATA.hygiene.findings||[]).forEach(f=>{const k=fclass(f.id);kinds[k.k==="cap"?"capability":k.k==="cfg"?"config":"alert"]++;});
+  (DATA.hygiene.findings||[]).forEach(f=>{kinds[fkind(f)]=(kinds[fkind(f)]||0)+1;});
   const findSegs=[{label:"capability",value:kinds.capability,color:"#7aa9ff"},{label:"config",value:kinds.config,color:"#f4cd57"},{label:"alert",value:kinds.alert,color:"#ff6b63"}];
   const charts=[];
   if(actSegs.some(s=>s.value))charts.push(chartCard("Actions by type",actSegs,"actions"));
@@ -503,9 +503,9 @@ function activate(id){
   SEV.forEach(sv=>{const g=fs.filter(f=>f.severity===sv);if(!g.length)return;
     const open=(sv==="critical"||sv==="high")?" open":"";
     h+=`<details class="grp"${open}><summary>${pill(sv)}<span class="gc">${g.length} finding${g.length>1?"s":""}</span><span class="cv">›</span></summary>`;
-    g.forEach(f=>{const cl=fclass(f.id);
+    g.forEach(f=>{const kd=fkind(f);
       h+=`<div class="finding"><span class="sd" style="background:${SEVCOL[sv]}"></span><div class="fb">
-        <div class="ft"><span class="fn">${esc(f.title)}</span><span class="tag ${cl.k}">${cl.label}</span>${useBadge(f.node_id)}</div>
+        <div class="ft"><span class="fn">${esc(f.title)}</span><span class="tag ${KINDCLS[kd]||"cap"}">${esc(kd)}</span>${useBadge(f.node_id)}</div>
         <div class="fd">${esc(f.detail)}</div>
         ${(f.factors||[]).length?`<div class="ff">${f.factors.map(esc).join(" · ")}</div>`:""}
         ${f.remediation?`<div class="rem">${ic("check")}<span>${esc(f.remediation)}</span></div>`:""}</div></div>`;});

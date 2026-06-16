@@ -1,10 +1,11 @@
 # Insikt — Specification
 
 > Working codename **Insikt** (Swedish for *insight*; placeholder).
-> A local-first, read-only tool that makes a self-hosted AI agent's **capabilities, actions, model usage, and risk surface** legible — and exposes that knowledge back to the agent itself as an MCP tool, so the agent can finally answer *"what did I do?"*
+> A local-first, read-only **observability dashboard for a self-hosted AI homelab** — the Raspberry Pi's health, a Hermes agent's capabilities/actions/model-usage/risk, and optional Honcho + Home Assistant — in one offline page or a live web server, and exposed back to the agent as a read-only MCP toolset so it can answer *"how's everything doing?"* and *"what did I do?"*
 
-> This is the design spec. To install and use the implementation see
-> [`README.md`](README.md); for the code map and tests see [`CLAUDE.md`](CLAUDE.md).
+> This is the design spec; some of it (the original agent-auditor framing) predates
+> the whole-system dashboard the code now ships. For the authoritative current code
+> map see [`CLAUDE.md`](CLAUDE.md); to install/use it see [`README.md`](README.md).
 
 ---
 
@@ -15,11 +16,11 @@ You run several services on a box (Hermes, Honcho, Home Assistant, ZeroTier, …
 1. **Infrastructure topology** — what runs where and how it connects.
 2. **Agent behaviour** — what your AI agents *can do*, *have done*, *which models* they used, and *what they touched on the system*.
 
-**(1) is already solved.** Scanopy, Homelable (incl. a Home Assistant HACS build + Zigbee2MQTT import), OpenNetworkDiagram, HomeLabInfo, NetVisor all auto-discover and draw a live network/service map. Insikt does **not** rebuild this.
+**(1) — network topology — is already solved.** Scanopy, Homelable (incl. a Home Assistant HACS build + Zigbee2MQTT import), OpenNetworkDiagram, HomeLabInfo, NetVisor all auto-discover and draw a live network/service map. Insikt does **not** rebuild this.
 
-**(2) is not solved, and the agents are designed in a way that makes it hard.** Hermes deliberately trades inspectability for self-improvement: its effective capability set is spread across SQLite indices, cached prompts, and skills it *wrote for itself* during past optimization (GEPA) runs — so "show me exactly what this agent can do" has no single source of truth. OpenClaw's ClawHub skill ecosystem has been the target of credential-stealing supply-chain campaigns. When an agent installs community skills, writes its own, runs shell commands, and is reachable from Telegram/WhatsApp, *"what can it touch and what did it actually do"* is closer to a safety control than a dashboard.
+**(2) — system + agent state — is what Insikt makes legible**, in one place: the **host** (Raspberry Pi temperature, CPU, memory, disk, throttle history), the **agent** (Hermes), and the services it leans on (**Honcho**, **Home Assistant**). The agent half is the hard half: Hermes deliberately trades inspectability for self-improvement — its capability set is spread across SQLite indices, cached prompts, and skills it *wrote for itself* during past optimization (GEPA) runs, so "show me exactly what this agent can do" has no single source of truth. When an agent installs community skills, writes its own, runs shell commands, and is reachable from Telegram/WhatsApp, *"what can it touch and what did it actually do"* is closer to a safety control than a dashboard.
 
-**Insikt's job:** ingest what each agent already persists on disk, normalize it into one graph + timeline, track how it changes over time, flag the dangerous bits, and expose all of it back to the agent as a read-only MCP toolset. Read-only by default. Local-only by default.
+**Insikt's job:** read what the host and each service already expose (files, `/proc`/`/sys`, local APIs), normalize each into one **Section** of a whole-system state, flag the dangerous bits, render it as an offline page or a live read-only web server (reachable over a ZeroTier/Tailscale overlay), and expose the same state back to the agent as a read-only MCP toolset. Read-only by default. Local-only by default. Counts/versions/health/metrics only — never coordinates, entity/peer names, memory contents, or secret values.
 
 ### 1.1 North-star scenario (the flow Insikt is designed around)
 
@@ -31,9 +32,10 @@ Hermes:  (no Insikt yet) "I don't keep a structured record of that. There's a
 User:    "Yes."
 Hermes:  (runs the approved install; Insikt registers as an MCP server and
           backfills from my existing logs)
-          "Done. Yesterday you had me: patch the OpenClaw API key, run 3 shell
+          "Done. Yesterday you had me: rotate a gateway API key, run 3 shell
           commands in ~/projects, send 2 Telegram messages, and I wrote myself
-          a new skill 'pi-temp-watch' that has shell access — flagging that one."
+          a new skill 'pi-temp-watch' that has shell access — flagging that one.
+          (Also: the Pi has logged under-voltage; worth a look.)"
 ```
 
 Two consequences that drive the architecture: the agent must be able to **query** Insikt (→ §4, MCP interface), and "yesterday" must be answerable on the *first* install (→ §3.4, backfill).
@@ -76,7 +78,7 @@ Everything normalizes to a small set of nodes and edges. This powers the graph, 
 
 ## 3. Collectors (the ingestion layer)
 
-The thing that keeps Insikt from being a fragile single-target wrapper: every framework gets a versioned **collector** that reads its on-disk state and emits the normalized model above. Collectors are read-only and degrade gracefully when a path/schema is missing. They are framework-specific by necessity; everything downstream (store, MCP interface, UI) is framework-agnostic — see §7.
+The thing that keeps Insikt from being a fragile single-target wrapper: every data source gets a **collector** that reads its state and emits one normalized **Section** (the Hermes collector additionally builds the capability/action graph above). Collectors are read-only and degrade gracefully when a path/API/schema is missing — a dead source becomes `status=off` or a `partial` reason, never an exception that aborts the scan. Sources are specific by necessity; everything downstream (the `collect_state` contract, the dashboard, the live server, the MCP interface) is source-agnostic — see §7.
 
 ### 3.1 Hermes collector
 Reads from `HERMES_HOME` (default `~/.hermes`):
@@ -88,47 +90,46 @@ Reads from `HERMES_HOME` (default `~/.hermes`):
 - Honcho → optional: pull the user/peer **representation summary** via Honcho's API (works for both managed cloud and self-hosted). Surface as a "what it believes about me" panel; read-only.
 - Profiles (`-p`) → one `Agent` node per profile.
 
-### 3.2 OpenClaw collector
-Reads from `~/.openclaw`:
-- `openclaw.json` → gateway port/bind, auth mode, tailscale exposure, model config.
-- `credentials/<platform>/…` → `Connector` inventory (presence only; never secret material).
-- installed skills (ClawHub + local) → `Skill` nodes with `source=clawhub`, capture pkg name/version for hygiene lookups.
-- dashboard data / local DB (the same source feeding the `:18789` dashboard: sessions, API usage & cost, cron jobs) → `Model` usage, cost ledger, `Action` stream, scheduled-task inventory. ⚠ confirm whether to read the DB directly or call the dashboard's local API.
+### 3.2 Host collector (always on)
+Pure stdlib + an optional `vcgencmd`. Reads `/proc` and `/sys` so it works on any Linux; on a Raspberry Pi it adds SoC temperature and the under-voltage/throttle bits. Emits the **Host** section: model, cores, temperature, CPU% (from a `/proc/stat` delta), memory, disk, load, uptime, and throttle history. CPU% needs a persistent collector across ticks, so the live server reuses one instance (the one-shot `scan` samples a short interval itself). Status escalates on configurable temperature thresholds, high memory/disk, or throttling.
 
-### 3.3 Future collectors
-- **Claude Code** (`~/.claude`) — skills, sessions, MCP config.
+### 3.3 Optional service collectors
+- **Honcho** (`http://localhost:8000`) — `/health` + the v3 API. Emits **counts** of workspaces / peers / sessions and queue status. Never reads peer/workspace names, representations, or message contents.
+- **Home Assistant** (`http://localhost:8123`, long-lived token from a file or env) — `/api/`, `/api/config`, `/api/states`. Emits version, run state, component count, and a **per-domain entity count** (e.g. `sensor: 20`). Never reads entity names, states, coordinates, or any location/identity field.
+
+Optional sources are gated by `enabled: true|false|auto`; `auto` probes the local endpoint and drops to `off` when nothing answers.
+
+### 3.4 Future collectors
 - Generic **MCP server** introspection — enumerate tools each connected server exposes.
+- Additional homelab services as Sections (the contract is just "emit a `Section`").
 
-Each collector declares the framework version range it supports and emits a `partial: true` flag with reasons when something couldn't be read, so the UI and MCP responses can say "incomplete" rather than silently lie.
+Each collector emits `partial: true` with reasons when something couldn't be read, so the dashboard and MCP responses say "incomplete" rather than silently lie.
 
-### 3.4 Backfill on install (makes the north-star flow land on day one)
-Insikt is usually installed *at the moment* the user first asks "what did you do yesterday?" — so forward-only capture would answer "I can tell you from now on," which kills the magic. **The first action after install is a backfill pass:** the collector ingests the agent's already-retained history (Hermes conversation history, sessions, `mcp/logs/`; OpenClaw sessions + usage DB) and reconstructs the recent `Action` stream, tagged `source=backfill`. Live capture (§10.1) takes over from then on, tagged `source=live`. The reconstruction ceiling is whatever the agent actually logged — surface that honestly (e.g. "reconstructed from logs; may be incomplete before <date>").
+### 3.5 Backfill (makes the north-star flow land on day one)
+Insikt is usually first run *at the moment* the user asks "what did you do yesterday?" — so forward-only capture would answer "I can tell you from now on," which kills the magic. **The Hermes collector reconstructs the recent `Action` stream from already-retained history** (conversation history, sessions, `mcp/logs/`), tagged `source=backfill`. Live capture (§10.1) would take over from then on, tagged `source=live`. The reconstruction ceiling is whatever the agent actually logged — surfaced honestly via `partial`.
 
 ---
 
 ## 4. The MCP query interface (the agent-facing contract)
 
-This is the mechanism that makes the north-star flow work. Insikt runs as a **local MCP server**. Both target agents register MCP servers and merge their tools into the same registry as native tools, so once Insikt is connected the agent simply *has* these tools and picks them when the user asks an introspection question. No bespoke per-framework integration — MCP is the universal surface, which is also how Insikt stays cross-framework (one server serves Hermes, OpenClaw, Claude Code, Cursor, …).
+Insikt runs as a **local MCP server**. The agent registers it and merges its tools into the same registry as native tools, so once connected the agent simply *has* these tools and picks them when the user asks an introspection question. No bespoke integration — MCP is the universal surface. Tools read **live** state (`collect_state`); there is no database, so the answer is always current.
 
-### 4.1 Exposed tools (all read-only)
+### 4.1 Exposed tools (all read-only, live)
 | Tool | Input | Returns |
 |---|---|---|
-| `insikt_query_actions` | `agent?`, `window` (e.g. `yesterday`, ISO range), `type?` | Structured, summarized action list for the window. The answer to "what did you do?" |
-| `insikt_capability_surface` | `agent?` | Skills/tools/connectors and what each can reach. The "what can I do" answer. |
-| `insikt_risk_report` | `agent?` | Hygiene findings + per-agent risk score with contributing factors (§6). |
-| `insikt_diff` | `since` (timestamp/snapshot) | What changed: new skills, new credential reads, new connectors, new reachable hosts. |
-| `insikt_explain` | `node_id` (skill/action) | Detail on one node: origin, hash, tools, resources, credential reads. |
-| `insikt_self_report` | — | Insikt's own version, signature/provenance, and exact permissions. Lets the agent prove the tool to the user before/after install. |
+| `insikt_system_state` | — | Overall status + every section (host, Hermes, Honcho, Home Assistant) with status/summary/metrics. "How's everything doing?" |
+| `insikt_host` | — | Raspberry Pi temperature, CPU, memory, disk, load, uptime, throttle history. |
+| `insikt_hermes` | `view` (summary\|capability\|timeline\|cost\|hygiene\|graph\|all) | The agent's capabilities, action timeline, model spend, hygiene findings, or capability graph. |
+| `insikt_source` | `name` (honcho\|homeassistant\|system) | One source's live section. |
+| `insikt_describe_layout` | — | A secret-redacted layout digest + profile schema so the agent can author/repair its own profile. |
+| `insikt_self_report` | — | Insikt's own version, provenance, and exact permissions. Lets the agent prove the tool to the user. |
 
-Tools return **structured data, not prose** — the agent phrases the natural-language reply. Keep summaries token-light (the agent pays for the context).
+Tools return **structured data, not prose** — the agent phrases the natural-language reply. Summaries are token-light (the agent pays for the context).
 
 ### 4.2 Registration
-- **Hermes:** `hermes mcp add insikt --command <…>` (or it auto-discovers on restart); tools appear in the registry immediately, and `notifications/tools/list_changed` keeps them in sync.
-- **OpenClaw:** register Insikt as an MCP tool provider via its config/skill.
-- The packaging skill (§8) does this wiring as part of install so the user never touches config.
-
-### 4.3 Meta-audit
-Insikt logs every query made *to* it — including the agent's own — into the append-only store. This gives tamper-evidence and a tidy recursion: you can see "the agent asked itself what it did at 09:00," and because Insikt is itself an MCP server, its calls also show up in the agent's own MCP logs.
+- **Hermes:** `hermes mcp add insikt --command "insikt mcp"` — tools appear in the registry immediately.
+- **Claude Code:** `claude mcp add insikt -- insikt mcp`.
+- The `mcp` module is imported lazily, so `insikt scan` / `insikt serve` work even where the MCP SDK is absent.
 
 ---
 
@@ -160,30 +161,30 @@ Output: a per-agent risk score with the contributing factors enumerated (never j
 ## 7. Architecture
 
 ```
-┌─────────────┐  read-only   ┌───────────────┐
-│ Hermes FS   │◄────────────│               │
-│ OpenClaw FS │◄────────────│  Collectors   │──► normalized model
-│ Honcho API  │◄────────────│  (versioned,  │
-└─────────────┘              │  per-frmwk)   │
-                             └──────┬────────┘
-                                    │
-                          ┌─────────▼──────────┐
-                          │  Normalized store   │  SQLite, append-only
-                          │  (snapshots + meta- │  snapshots over time
-                          │   audit log)        │
-                          └─────────┬──────────┘
-                                    │  (framework-agnostic from here down)
-          ┌──────────────┬──────────┼───────────────┬────────────────┐
-          ▼              ▼          ▼                ▼                ▼
-   MCP server      Local web UI  Static HTML   Export adapter   Self-report
-   (agent-facing,  graph+timeline report (v0)  → Scanopy/        (provenance)
-    read-only)     (v1)                         Homelable (v3)
+┌──────────────┐  read-only   ┌────────────────┐
+│ /proc, /sys  │◄────────────│  Collectors    │
+│ ~/.hermes FS │◄────────────│  (system,      │──► each emits one Section
+│ Honcho API   │◄────────────│   hermes,      │    (+ Hermes capability/action graph)
+│ Home Asst API│◄────────────│   honcho, HA)  │
+└──────────────┘             └───────┬────────┘
+                                     │
+                          ┌──────────▼───────────┐
+                          │   state.collect_state │  one whole-system dict
+                          │   {meta,status,        │  {host, hermes, honcho, HA}
+                          │    sections, agent}    │
+                          └──────────┬───────────┘
+                                     │  (source-agnostic from here down)
+            ┌────────────────┬───────┼────────────────┐
+            ▼                ▼       ▼                ▼
+   report/dashboard     server.py  mcp_server     Self-report
+   (offline HTML)      (live read- (agent-facing, (provenance)
+                        only + SSE) read-only)
 ```
 
-- **Split that matters:** collectors are framework-specific; the store, MCP interface, UI, and exports are framework-agnostic. New agent support = one new collector, nothing else changes.
-- **Snapshots are append-only.** Each scan writes a timestamped snapshot; diffs come for free; you get an immutable-ish history of how the agent evolved.
-- **Two bind targets, both loopback by default:** the MCP server (for the local agent) and the optional web UI. An audit tool that's itself an exposed service would be self-defeating.
-- **No secret values ever leave the agent's own files** — Insikt reads names/scopes, not material.
+- **Split that matters:** collectors are source-specific; `collect_state`, the dashboard, the live server, and the MCP tools are source-agnostic. A new source = one new `Collector` emitting a `Section`, nothing else changes.
+- **State is computed live, not stored.** Each `scan`/request recomputes from the sources; the live server caches the latest in memory and refreshes host metrics on a fast loop (SSE) and the heavier sources on a slow one. (Append-only snapshot history is deferred — kept pluggable.)
+- **Read-only everywhere:** collectors never write to the sources; the web server serves only `GET` (everything else `405`); the MCP surface never mutates.
+- **No secret values, no identifying data** — counts/versions/health/metrics only; credential key *names*, never material.
 
 ---
 

@@ -171,6 +171,21 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .finding .fn{font-weight:600;font-size:14.5px;letter-spacing:-.005em}
   .finding .fd{color:var(--on-var);font-size:13.5px;margin-top:6px;line-height:1.55}
   .finding .ff{margin-top:9px;color:var(--on-faint);font-size:12px}
+  .rem{margin-top:11px;display:flex;gap:9px;align-items:flex-start;background:var(--sc-2);
+    border-radius:10px;padding:9px 12px;font-size:13px;color:var(--on)}
+  .rem .ic{color:var(--low);margin-top:1px;flex:0 0 auto;width:15px;height:15px}
+  .lp{color:var(--on-faint);font-weight:500;font-size:12px;margin-left:3px}
+  /* recommended next steps */
+  .recs{padding:8px var(--pad)}
+  .rec{display:flex;gap:13px;padding:14px 0}
+  .rec+.rec{border-top:1px solid var(--divider)}
+  .rec .sd{width:8px;height:8px;border-radius:50%;margin-top:6px;flex:0 0 auto}
+  .rec .rt{font-size:14.5px;font-weight:550;letter-spacing:-.005em}
+  .rec .rm{color:var(--on-faint);font-size:12.5px;margin-top:3px}
+  .search{width:100%;background:var(--sc);color:var(--on);border:none;border-radius:var(--r-sm);
+    padding:13px 16px;font-size:14.5px;margin-bottom:16px;min-height:46px}
+  .search::placeholder{color:var(--on-faint)}
+  .skcard.hide{display:none}
 
   /* timeline */
   .ev{display:flex;gap:16px;padding:15px var(--pad)}
@@ -261,6 +276,16 @@ const fmtN=n=>(n==null?0:n).toLocaleString();
 const pill=s=>`<span class="pill s-${esc(s||"info")}"><span class="d"></span>${esc(s||"info")}</span>`;
 const tpill=t=>`<span class="pill s-info"><span class="d"></span>${esc(t)}</span>`;
 const fmtTs=t=>(t||"").replace("T"," ").replace(/[.+Z].*/,"");
+const NOW=new Date(DATA.meta.scan_ts||Date.now());
+const _d10=d=>d.toISOString().slice(0,10);
+const TODAY=_d10(NOW), YEST=_d10(new Date(NOW.getTime()-864e5));
+function inWin(ts,w){if(!w||w==="all")return true;if(!ts)return false;
+  const day=String(ts).slice(0,10);
+  if(w==="today")return day===TODAY;
+  if(w==="yesterday")return day===YEST;
+  const days={"7d":7,"30d":30}[w];
+  if(days)return new Date(ts)>=new Date(NOW.getTime()-days*864e5);
+  return true;}
 const I={
   check:'<path d="M20 6 9 17l-5-5"/>',
   alert:'<path d="M10.9 3.6 1.8 18.5A1.5 1.5 0 0 0 3.1 21h17.8a1.5 1.5 0 0 0 1.3-2.5L13.1 3.6a1.5 1.5 0 0 0-2.2 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
@@ -287,17 +312,19 @@ function useBadge(id){const x=SKILLUSE[id];if(!x)return"";
 function donut(segs,centerLabel){
   segs=segs.filter(s=>s.value>0);
   const total=segs.reduce((a,s)=>a+s.value,0);
-  const cx=80,cy=80,rad=58,sw=20,circ=2*Math.PI*rad;
+  const cx=80,cy=80,rad=58,sw=18,circ=2*Math.PI*rad;
+  const multi=segs.length>1, gap=multi?circ*0.018:0;
   let off=0,arcs="";
   if(!total){arcs=`<circle cx="${cx}" cy="${cy}" r="${rad}" fill="none" stroke="var(--sc-2)" stroke-width="${sw}"/>`;}
-  segs.forEach(s=>{const len=s.value/total*circ;
-    arcs+=`<circle cx="${cx}" cy="${cy}" r="${rad}" fill="none" stroke="${s.color}" stroke-width="${sw}" stroke-dasharray="${len.toFixed(2)} ${(circ-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
-    off+=len;});
-  return `<svg class="donut" viewBox="0 0 160 160" width="148" height="148">${arcs}
+  segs.forEach(s=>{const seg=s.value/total*circ,len=Math.max(0.1,seg-gap);
+    arcs+=`<circle cx="${cx}" cy="${cy}" r="${rad}" fill="none" stroke="${s.color}" stroke-width="${sw}" ${multi?'stroke-linecap="round"':''} stroke-dasharray="${len.toFixed(2)} ${(circ-len).toFixed(2)}" stroke-dashoffset="${(-off-(multi?gap/2:0)).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    off+=seg;});
+  return `<svg class="donut" viewBox="0 0 160 160" width="146" height="146">${arcs}
     <text x="${cx}" y="${cy-3}" text-anchor="middle" class="donut-n">${fmtN(total)}</text>
     <text x="${cx}" y="${cy+15}" text-anchor="middle" class="donut-l">${esc(centerLabel||"")}</text></svg>`;
 }
-const legend=segs=>`<div class="legend">`+segs.filter(s=>s.value>0).map(s=>`<div class="lg"><span class="sw" style="background:${s.color}"></span><span class="lt">${esc(s.label)}</span><span class="lv">${fmtN(s.value)}</span></div>`).join("")+`</div>`;
+function legend(segs){const total=segs.reduce((a,s)=>a+s.value,0)||1;
+  return `<div class="legend">`+segs.filter(s=>s.value>0).map(s=>`<div class="lg"><span class="sw" style="background:${s.color}"></span><span class="lt">${esc(s.label)}</span><span class="lv">${fmtN(s.value)} <span class="lp">${Math.round(s.value/total*100)}%</span></span></div>`).join("")+`</div>`;}
 const chartCard=(title,segs,center)=>`<div class="card"><div class="card-title">${esc(title)}</div><div class="chart-body">${donut(segs,center)}${legend(segs)}</div></div>`;
 
 /* app bar + banners */
@@ -356,6 +383,14 @@ function activate(id){
   if(actSegs.some(s=>s.value))charts.push(chartCard("Actions by type",actSegs,"actions"));
   if(findSegs.some(s=>s.value))charts.push(chartCard("Findings by kind",findSegs,"findings"));
   if(charts.length)h+=`<div class="charts">${charts.join("")}</div>`;
+  // recommended next steps — turn findings into actions
+  const fsr=(DATA.hygiene.findings||[]).slice().sort((a,b)=>SEV.indexOf(a.severity)-SEV.indexOf(b.severity));
+  const recs=[],rseen=new Set();
+  fsr.forEach(f=>{if(f.remediation&&!rseen.has(f.remediation)){rseen.add(f.remediation);recs.push(f);}});
+  if(recs.length){
+    h+=`<div class="stitle">${ic("check")} Recommended next steps</div><div class="card recs">`+
+      recs.slice(0,6).map(f=>`<div class="rec"><span class="sd" style="background:${SEVCOL[f.severity]}"></span><div><div class="rt">${esc(f.remediation)}</div><div class="rm">${esc(f.title)}</div></div></div>`).join("")+`</div>`;
+  }
   // scorecards
   const tiles=[["agents","Agents"],["skills","Skills"],["self_authored_skills","Self-authored"],["connectors","Connectors"],
     ["models","Models"],["credential_refs","Credentials"],["actions","Actions"],["total_tokens","Tokens"]];
@@ -375,6 +410,8 @@ function activate(id){
   const root=$("tab-capability"),cap=DATA.capability;
   let h=`<div class="callout">${ic("layers")}<div><b>Capabilities</b> are what each skill could do — installed and available, not necessarily used. "never used" means it has never been invoked; see <b>Timeline</b> for what actually ran.</div></div>`;
   if(!cap.agents.length){root.innerHTML=h+`<div class="empty">No agents found.</div>`;return;}
+  const totalSkills=Object.keys(SKILLUSE).length;
+  if(totalSkills>6)h+=`<input class="search" id="cap-search" placeholder="Search skills…" autocomplete="off" autocapitalize="off" spellcheck="false">`;
   const used=Object.values(SKILLUSE).filter(x=>x.u>0).length, never=Object.values(SKILLUSE).filter(x=>x.u===0).length;
   if(used+never>0)h+=`<div class="charts"><div class="card"><div class="card-title">Skill usage</div><div class="chart-body">${donut([{label:"used",value:used,color:"#5fd08a"},{label:"never used",value:never,color:"#90a4ae"}],"skills")}${legend([{label:"used",value:used,color:"#5fd08a"},{label:"never used",value:never,color:"#90a4ae"}])}</div></div></div>`;
   cap.agents.forEach(a=>{
@@ -391,7 +428,8 @@ function activate(id){
       const badges=[sk.self_authored?'<span class="tag self">self-authored</span>':"",
         sk.use_count===0?'<span class="tag">never used</span>':(sk.use_count>0?`<span class="tag">used ${sk.use_count}&times;</span>`:""),
         sk.risk?pill(sk.risk):""].join("");
-      h+=`<div class="card"><div class="ct"><span class="title">${esc(sk.name)}</span>${badges}<span class="spacer meta">${esc(sk.kind||sk.source||"")}</span></div>`;
+      const sdata=esc((sk.name+" "+(sk.tools||[]).join(" ")+" "+(sk.kind||sk.source||"")+" "+(sk.credential_reads||[]).join(" ")).toLowerCase());
+      h+=`<div class="card skcard" data-s="${sdata}"><div class="ct"><span class="title">${esc(sk.name)}</span>${badges}<span class="spacer meta">${esc(sk.kind||sk.source||"")}</span></div>`;
       if((sk.tools||[]).length)h+=`<div class="kv"><span class="k">can use</span><span class="v">${sk.tools.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</span></div>`;
       if((sk.reaches||[]).length)h+=`<div class="kv"><span class="k">can reach</span><span class="v">${sk.reaches.map(r=>`<span class="tag">${esc(r.value)}</span>`).join("")}</span></div>`;
       if((sk.credential_reads||[]).length)h+=`<div class="kv"><span class="k">reads</span><span class="v">${sk.credential_reads.map(c=>`<span class="tag">${esc(c)}</span>`).join("")}</span></div>`;
@@ -399,6 +437,9 @@ function activate(id){
     });
   });
   root.innerHTML=h;
+  const si=$("cap-search");
+  if(si)si.oninput=()=>{const q=si.value.trim().toLowerCase();
+    root.querySelectorAll(".skcard").forEach(el=>el.classList.toggle("hide",!!q&&!el.dataset.s.includes(q)));};
 })();
 
 /* timeline */
@@ -407,12 +448,13 @@ function activate(id){
   const types=[...new Set(tl.actions.map(a=>a.type))].sort();
   const agents=[...new Set(tl.actions.map(a=>a.agent).filter(Boolean))].sort();
   root.innerHTML=`<div class="callout">${ic("clock")}<div><b>What actually ran</b> — reconstructed from the agents' own logs. ${esc(tl.count)} action(s).</div></div>
-    <div class="filters"><select id="f-type"><option value="">All types</option>${types.map(t=>`<option>${esc(t)}</option>`).join("")}</select>
+    <div class="filters"><select id="f-win"><option value="all">All time</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select>
+    <select id="f-type"><option value="">All types</option>${types.map(t=>`<option>${esc(t)}</option>`).join("")}</select>
     ${agents.length>1?`<select id="f-agent"><option value="">All agents</option>${agents.map(a=>`<option>${esc(a)}</option>`).join("")}</select>`:""}</div>
     <div id="tlb"></div>`;
   function draw(){
-    const ft=$("f-type").value,fa=($("f-agent")||{}).value||"";
-    const rows=tl.actions.filter(a=>(!ft||a.type===ft)&&(!fa||a.agent===fa));
+    const ft=$("f-type").value,fa=($("f-agent")||{}).value||"",fw=$("f-win").value;
+    const rows=tl.actions.filter(a=>(!ft||a.type===ft)&&(!fa||a.agent===fa)&&inWin(a.ts,fw));
     if(!rows.length){$("tlb").innerHTML=`<div class="empty">No actions in this view.</div>`;return;}
     let h=`<div class="card" style="padding:6px var(--pad)">`;
     rows.forEach(a=>{
@@ -426,7 +468,7 @@ function activate(id){
     if(tl.truncated)h+=`<div class="muted" style="margin-top:12px;font-size:13px">Showing the most recent ${tl.actions.length}.</div>`;
     $("tlb").innerHTML=h;
   }
-  $("f-type").onchange=draw;if($("f-agent"))$("f-agent").onchange=draw;draw();
+  $("f-type").onchange=draw;$("f-win").onchange=draw;if($("f-agent"))$("f-agent").onchange=draw;draw();
 })();
 
 /* models & cost */
@@ -465,7 +507,8 @@ function activate(id){
       h+=`<div class="finding"><span class="sd" style="background:${SEVCOL[sv]}"></span><div class="fb">
         <div class="ft"><span class="fn">${esc(f.title)}</span><span class="tag ${cl.k}">${cl.label}</span>${useBadge(f.node_id)}</div>
         <div class="fd">${esc(f.detail)}</div>
-        ${(f.factors||[]).length?`<div class="ff">${f.factors.map(esc).join(" · ")}</div>`:""}</div></div>`;});
+        ${(f.factors||[]).length?`<div class="ff">${f.factors.map(esc).join(" · ")}</div>`:""}
+        ${f.remediation?`<div class="rem">${ic("check")}<span>${esc(f.remediation)}</span></div>`:""}</div></div>`;});
     h+=`</details>`;});
   root.innerHTML=h;
 })();

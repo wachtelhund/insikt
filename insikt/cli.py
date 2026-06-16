@@ -193,6 +193,7 @@ def _hydrate_hygiene(hy_dict, Finding, RiskScore, Severity, HygieneResult):
         Finding(
             id=f["id"], severity=Severity(f["severity"]), title=f["title"], detail=f["detail"],
             node_id=f.get("node_id"), agent_id=f.get("agent_id"), factors=f.get("factors", []),
+            remediation=f.get("remediation"),
         )
         for f in hy_dict.get("findings", [])
     ]

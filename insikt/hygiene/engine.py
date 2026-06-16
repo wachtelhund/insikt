@@ -114,10 +114,15 @@ class HygieneEngine:
                     detail=f"{skill.label}: origin_hash {h[:12]}… is on the advisory feed",
                     node_id=sid,
                     factors=[f"hash {h[:12]}…", "advisory feed match"],
+                    remediation="Remove or quarantine this skill — it matches a known-bad advisory hash.",
                 )
             )
 
         # 2. Static content scan -> one finding per detected category.
+        cap_rem = {
+            "obfuscation": "Decode and verify the embedded payload before trusting this skill.",
+            "auto_update": "Review the auto-update / self-modifying hook; pin or disable it.",
+        }
         caps = self._skill_capabilities(props)
         for category, evidence in caps.items():
             out.append(
@@ -128,6 +133,7 @@ class HygieneEngine:
                     detail=f"{skill.label}: {', '.join(evidence[:3])}",
                     node_id=sid,
                     factors=[category, *(["self-authored"] if props.get("self_authored") else [])],
+                    remediation=cap_rem.get(category),
                 )
             )
 
@@ -143,6 +149,7 @@ class HygieneEngine:
                     detail=f"{skill.label}: {', '.join(bad_hosts[:5])}",
                     node_id=sid,
                     factors=[f"host:{h}" for h in bad_hosts[:5]],
+                    remediation="Confirm these egress hosts are intended; add them to the allowlist or remove the skill.",
                 )
             )
 
@@ -167,6 +174,8 @@ class HygieneEngine:
                     ),
                     node_id=sid,
                     factors=["credential_read", "network", "shell", origin],
+                    remediation=("Review/restrict this self-authored skill — it can read credentials, "
+                                 "reach the network, and run shell in one place." if self_authored else None),
                 )
             )
         return out
@@ -200,6 +209,7 @@ class HygieneEngine:
                         node_id=agent.id,
                         agent_id=agent.id,
                         factors=factors,
+                        remediation="Bind the gateway to loopback (127.0.0.1) or require authentication.",
                     )
                 )
             elif exposed_bind:
@@ -229,6 +239,7 @@ class HygieneEngine:
                         node_id=c.id,
                         agent_id=agent.id,
                         factors=[f"connector={c.label}", "no_allowlist"],
+                        remediation=f"Add an allowlist for {c.label} (allowed_chats / require_mention) so only known senders reach the agent.",
                     )
                 )
 
@@ -255,27 +266,33 @@ class HygieneEngine:
         checks = [
             # Hermes
             ("tirith_enabled", False, Severity.MEDIUM, "Skill security scanner is disabled",
-             "the agent's static skill scanner (tirith) is turned off"),
+             "the agent's static skill scanner (tirith) is turned off",
+             "Enable the skill scanner (security.tirith_enabled: true)."),
             ("allow_lazy_installs", True, Severity.MEDIUM, "Unattended skill installs are allowed",
-             "skills can be installed without explicit confirmation"),
+             "skills can be installed without explicit confirmation",
+             "Disable unattended installs (security.allow_lazy_installs: false)."),
             ("guard_agent_created", False, Severity.MEDIUM, "Self-authored skills are not guarded",
-             "skills the agent writes for itself are not gated before use"),
+             "skills the agent writes for itself are not gated before use",
+             "Gate agent-created skills (skills.guard_agent_created: true)."),
             # Claude Code
             ("skip_dangerous_prompt", True, Severity.MEDIUM, "Dangerous-mode permission prompt is skipped",
-             "skipDangerousModePermissionPrompt is on — risky actions aren't confirmed"),
+             "skipDangerousModePermissionPrompt is on — risky actions aren't confirmed",
+             "Re-enable the dangerous-action prompt (skipDangerousModePermissionPrompt: false)."),
             ("skip_auto_prompt", True, Severity.MEDIUM, "Auto-permission prompt is skipped",
-             "skipAutoPermissionPrompt is on"),
+             "skipAutoPermissionPrompt is on",
+             "Re-enable the auto-permission prompt (skipAutoPermissionPrompt: false)."),
             ("permission_mode", "bypassPermissions", Severity.HIGH, "Permission checks are bypassed",
-             "defaultMode is bypassPermissions — tools run without permission gating"),
+             "defaultMode is bypassPermissions — tools run without permission gating",
+             "Use a gated permission mode (permissions.defaultMode: auto/acceptEdits)."),
         ]
         for agent in graph.by_type(NodeType.AGENT):
             p = agent.props
-            for key, bad, sev, title, detail in checks:
+            for key, bad, sev, title, detail, rem in checks:
                 if key in p and p.get(key) == bad:
                     out.append(Finding(
                         id=f"posture:{key}:{agent.id}", severity=sev, title=title,
                         detail=f"{agent.label}: {detail}", node_id=agent.id, agent_id=agent.id,
-                        factors=[f"{key}={p.get(key)}"],
+                        factors=[f"{key}={p.get(key)}"], remediation=rem,
                     ))
         return out
 
@@ -297,6 +314,7 @@ class HygieneEngine:
                     ),
                     node_id=sid,
                     factors=["capability drift", f"gained:{ev.get('gained_tool')}", "self-authored"],
+                    remediation="Review why this self-authored skill gained new access; revert if unexpected.",
                 )
             )
         return out

@@ -245,6 +245,7 @@ class Finding:
     node_id: Optional[str] = None
     agent_id: Optional[str] = None
     factors: list[str] = field(default_factory=list)
+    remediation: Optional[str] = None  # a concrete suggested next step (README §6)
 
     def to_dict(self) -> dict:
         return {
@@ -255,6 +256,7 @@ class Finding:
             "node_id": self.node_id,
             "agent_id": self.agent_id,
             "factors": list(self.factors),
+            "remediation": self.remediation,
         }
 
 

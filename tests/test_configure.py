@@ -57,3 +57,36 @@ def test_propose(hermes_home):
     fw, profile, validation = cfg.propose(Path(hermes_home), None)
     assert fw == "hermes"
     assert validation["counts"]["skills"] == 3
+
+
+def test_extract_profile_from_fenced_block():
+    text = "sure, here it is:\n```yaml\nframework: hermes\nskills_glob: a/**/X.md\n```\ndone"
+    p = cfg._extract_profile(text)
+    assert p["skills_glob"] == "a/**/X.md"
+    assert cfg._extract_profile("not yaml at all <<<") is None
+
+
+def test_agent_author_profile_drives_cli(hermes_home, monkeypatch):
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(shutil, "which", lambda b: f"/usr/bin/{b}")
+
+    class _R:
+        returncode = 0
+        stdout = "```yaml\nframework: hermes\nskills_glob: skills/**/SKILL.md\nconfig_file: config.yaml\n```"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+    assert cfg.agent_driver_available("hermes") is True
+    profile, note = cfg.agent_author_profile(Path(hermes_home), "hermes", timeout=5)
+    assert note == "ok"
+    assert profile["framework"] == "hermes"
+    assert profile["home"] == hermes_home
+
+
+def test_agent_author_profile_no_cli(hermes_home, monkeypatch):
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda b: None)
+    profile, note = cfg.agent_author_profile(Path(hermes_home), "hermes")
+    assert profile is None and "not found" in note

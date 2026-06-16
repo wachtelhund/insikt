@@ -181,6 +181,74 @@ def propose(home: Path, framework: Optional[str]) -> tuple[str, dict, dict]:
     return fw, profile, validation
 
 
+# How to drive each framework's CLI for a one-shot, tool-less prompt. This is the
+# only framework-specific bit of the agent path; unknown frameworks fall back to
+# the manual hand-off.
+AGENT_CLI = {
+    "hermes": {"bin": "hermes", "args": lambda prompt: ["-z", prompt, "-t", ""]},
+}
+
+_AGENT_INSTRUCTION = (
+    "You are configuring the Insikt audit tool for THIS agent. Using the layout digest and "
+    "profile schema below, output ONLY a YAML collector profile for insikt (paths relative to "
+    "home) inside a single fenced ```yaml block — no prose, no explanation. Keep the schema's "
+    "keys; correct any path that is wrong for this install.\n\nDIGEST + SCHEMA:\n"
+)
+
+
+def agent_driver_available(framework: str) -> bool:
+    import shutil
+
+    drv = AGENT_CLI.get(framework)
+    return bool(drv and shutil.which(drv["bin"]))
+
+
+def _extract_profile(text: str) -> Optional[dict]:
+    import re
+
+    import yaml
+
+    m = re.search(r"```(?:ya?ml)?\s*\n(.*?)```", text, re.DOTALL)
+    blob = m.group(1) if m else text
+    try:
+        data = yaml.safe_load(blob)
+    except yaml.YAMLError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def agent_author_profile(home: Path, framework: str, timeout: int = 240) -> tuple[Optional[dict], str]:
+    """Drive the framework's own CLI to author a profile from the digest. Returns
+    (profile, note). The agent supplies intelligence; Insikt validates + applies,
+    so the agent never has to run a command itself."""
+    import shutil
+    import subprocess
+
+    drv = AGENT_CLI.get(framework)
+    if not drv:
+        return None, f"no agent driver for framework {framework!r}"
+    binpath = shutil.which(drv["bin"])
+    if not binpath:
+        return None, f"{drv['bin']} not found on PATH"
+
+    import json as _json
+
+    prompt = _AGENT_INSTRUCTION + _json.dumps(describe(home, framework), indent=2, default=str)
+    try:
+        r = subprocess.run([binpath, *drv["args"](prompt)], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None, f"agent timed out after {timeout}s"
+    except OSError as exc:
+        return None, f"could not run agent: {exc}"
+    # The agent CLI may exit non-zero on teardown; trust the output if it parses.
+    profile = _extract_profile(r.stdout or "")
+    if not profile:
+        return None, "agent did not return a parseable YAML profile"
+    profile.setdefault("framework", framework)
+    profile["home"] = str(home)
+    return profile, "ok"
+
+
 def describe(home: Path, framework: Optional[str]) -> dict:
     """The --describe payload an agent consumes to author/repair a profile."""
     fw = framework or detect_framework(home) or "unknown"

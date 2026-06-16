@@ -343,7 +343,7 @@ def cmd_configure(args) -> int:
         use_agent = False  # non-interactive: heuristic, unless --agent
 
     if use_agent:
-        return _agent_handoff(home, framework)
+        return _agent_configure(home, framework, args)
 
     framework, profile, validation = cfg.propose(home, framework)
     print(f"\nproposed profile for '{framework}' (home {home}):\n")
@@ -352,6 +352,28 @@ def cmd_configure(args) -> int:
     if _confirm("Save this profile?", args.yes):
         print(f"saved → {save_profile(framework, profile)}")
     return 0
+
+
+def _agent_configure(home: Path, framework: str, args) -> int:
+    """Drive the user's agent to author a profile, then validate + confirm + save.
+    Falls back to the manual hand-off if no agent CLI is available."""
+    import yaml
+
+    from . import configure as cfg
+    from .profiles import save_profile
+
+    if cfg.agent_driver_available(framework):
+        print(f"\nasking your {framework} agent to author a profile (one model call, ~30s)…")
+        profile, note = cfg.agent_author_profile(home, framework, timeout=args.timeout)
+        if profile:
+            print("\nyour agent proposed:\n")
+            print(yaml.safe_dump(profile, sort_keys=False))
+            _print_validation(cfg.validate_profile(home, framework, profile))
+            if _confirm("Save this profile?", args.yes):
+                print(f"saved → {save_profile(framework, profile)}")
+            return 0
+        print(f"  ⚠ couldn't use the agent automatically ({note}); falling back to manual hand-off.")
+    return _agent_handoff(home, framework)
 
 
 def _agent_handoff(home: Path, framework: str) -> int:
@@ -488,8 +510,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--apply", default=None, metavar="FILE", help="apply an agent-authored profile (yaml/json)")
     sp.add_argument("--describe", action="store_true", help="emit a layout digest + schema for an agent to author a profile")
     sp.add_argument("--show", action="store_true", help="print the current effective profile")
-    sp.add_argument("--agent", action="store_true", help="hand configuration to your agent (skip the prompt)")
+    sp.add_argument("--agent", action="store_true", help="have your agent author the profile (skip the prompt)")
     sp.add_argument("--auto", action="store_true", help="use the heuristic profile (skip the agent prompt)")
+    sp.add_argument("--timeout", type=int, default=240, help="seconds to wait for the agent (default 240)")
     sp.add_argument("--yes", action="store_true", help="save without prompting")
     sp.set_defaults(func=cmd_configure)
 

@@ -66,12 +66,29 @@ def test_report_subcommand(hermes_home, tmp_path, capsys):
 
 
 def test_configure_agent_handoff(hermes_home, tmp_path, monkeypatch, capsys):
+    # no agent CLI available -> manual hand-off (deterministic regardless of host)
+    monkeypatch.setattr("insikt.configure.agent_driver_available", lambda fw: False)
     monkeypatch.setattr("insikt.profiles.PROFILE_DIR", tmp_path / "profiles")
     rc = main(["configure", "--home", hermes_home, "--framework", "hermes", "--agent"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "insikt_describe_layout" in out  # the agent is told what to call
     assert (tmp_path / "configure-request.json").exists()
+
+
+def test_configure_agent_drives_cli(hermes_home, tmp_path, monkeypatch, capsys):
+    # agent CLI present -> Insikt drives it, validates, and saves on --yes
+    monkeypatch.setattr("insikt.profiles.PROFILE_DIR", tmp_path / "profiles")
+    monkeypatch.setattr("insikt.configure.agent_driver_available", lambda fw: True)
+    profile_yaml = "```yaml\nframework: hermes\nskills_glob: skills/**/SKILL.md\nconfig_file: config.yaml\n```"
+    monkeypatch.setattr(
+        "insikt.configure.agent_author_profile",
+        lambda home, fw, timeout=240: (__import__("yaml").safe_load(profile_yaml.split("```yaml\n")[1].split("```")[0]) | {"framework": fw, "home": str(home)}, "ok"),
+    )
+    rc = main(["configure", "--home", hermes_home, "--framework", "hermes", "--agent", "--yes"])
+    assert rc == 0
+    assert "your agent proposed" in capsys.readouterr().out
+    assert (tmp_path / "profiles" / "hermes.yaml").exists()
 
 
 def test_configure_auto_heuristic(hermes_home, tmp_path, monkeypatch, capsys):

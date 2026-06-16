@@ -76,6 +76,12 @@ class StateCache:
         st = collect_state(self.profile, system_collector=self._sys)
         with self._lock:
             self._state = st
+            self._history.append(self._sample())
+
+    def refresh_now(self) -> dict:
+        """Force an immediate full re-collect and return the fresh state."""
+        self._refresh_full()
+        return self.state()
 
     def run(self) -> None:
         fast = float((self.profile.get("server") or {}).get("refresh", 5))
@@ -133,6 +139,10 @@ def _make_handler(cache: StateCache):
                 self._send(200, json.dumps(cache.state(), default=str), "application/json")
             elif path == "/api/host":
                 self._send(200, json.dumps(cache.host(), default=str), "application/json")
+            elif path == "/api/refresh":
+                # force an immediate full re-collect (the UI's manual "Refresh"). Read-only:
+                # it only re-reads the sources, never mutates the host or the agent.
+                self._send(200, json.dumps(cache.refresh_now(), default=str), "application/json")
             elif path == "/healthz":
                 self._send(200, json.dumps({"status": "ok"}), "application/json")
             elif path == "/events":

@@ -188,6 +188,17 @@ def _post(server, path, payload):
         return resp.status, json.loads(resp.read())
 
 
+def test_refresh_returns_fresh_full_state():
+    """GET /api/refresh forces a full re-collect and returns the whole state."""
+    with _Server(_make_cache()) as srv:
+        status, ctype, raw = _get(srv, "/api/refresh")
+        assert status == 200 and "application/json" in ctype
+        body = json.loads(raw)
+        assert "sections" in body and "system" in body["sections"]
+        assert "meta" in body and "status" in body
+        assert "history" in body  # ring buffer travels with the state
+
+
 def test_chat_disabled_by_default_is_405():
     """Chat is opt-in: with no server.chat config, POST /api/chat is rejected."""
     with _Server(_make_cache()) as srv:

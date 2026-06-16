@@ -102,19 +102,60 @@ if [ -n "$PRIOR" ] && [ "$PRIOR" != "$NEW" ]; then ok "updated $PRIOR → $NEW"
 elif [ -n "$PRIOR" ]; then ok "reinstalled $NEW (already current)"
 else ok "installed $NEW → $BIN_DIR/insikt"; fi
 
-# --- 5. first run ---------------------------------------------------------
-say "running first scan…"
-"$VENV/bin/insikt" scan || say "nothing to scan yet — run 'insikt scan' once Hermes is set up on this host"
+# --- 5. one-time check: what can Insikt see on this host? -----------------
+say "checking what Insikt can see on this host…"
+"$VENV/bin/insikt" scan --out "$INSIKT_HOME/overview.html" || say "nothing to read yet — set up Hermes, then re-run 'insikt scan'"
+
+# --- 6. live dashboard service (keeps serving across reboots/logout) -------
+PORT="${INSIKT_PORT:-8420}"
+_ips() { hostname -I 2>/dev/null || ipconfig getifaddr en0 2>/dev/null || echo "localhost"; }
+setup_serve() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  systemctl --user show-environment >/dev/null 2>&1 || return 1   # need a user systemd bus
+  mkdir -p "$HOME/.config/systemd/user"
+  cat > "$HOME/.config/systemd/user/insikt.service" <<UNIT
+[Unit]
+Description=Insikt read-only homelab dashboard
+After=network-online.target
+
+[Service]
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin:%h/.insikt/venv/bin
+ExecStart=%h/.insikt/venv/bin/insikt serve --port ${PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+UNIT
+  systemctl --user daemon-reload || return 1
+  systemctl --user enable --now insikt.service >/dev/null 2>&1 || return 1
+  loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || true   # survive logout (best effort)
+  return 0
+}
+if [ -z "${INSIKT_NO_SERVE:-}" ]; then
+  if setup_serve; then
+    sleep 2
+    ok "live dashboard running as a service (auto-starts on boot) — manage with: systemctl --user {status,restart,stop} insikt"
+    for ip in $(_ips); do say "  → http://${ip}:${PORT}"; done
+    say "  read-only. If a firewall is active, allow port ${PORT} on your overlay interface, e.g.:"
+    say "    sudo ufw allow in on <zerotier-iface> to any port ${PORT} proto tcp"
+  else
+    say "no user-systemd here — start the dashboard yourself (and add it to your init):  insikt serve"
+  fi
+else
+  say "dashboard service skipped (INSIKT_NO_SERVE set) — start it with:  insikt serve"
+fi
 
 echo
 ok "done"
 case ":$PATH:" in *":$BIN_DIR:"*) :;; *) say "add this to your shell profile:  export PATH=\"$BIN_DIR:\$PATH\"";; esac
 cat <<EOF
 
-  insikt scan        one-shot snapshot + overview.html
-  insikt serve       live read-only dashboard (reach it over your overlay)
-  insikt mcp         run the read-only MCP server for your agent
-  insikt --help
+  The dashboard is live at the URL above. Other commands:
+    insikt configure   adapt to a non-standard layout (your agent can author it)
+    insikt scan        write a one-off offline overview.html
+    insikt mcp         read-only MCP server for your agent
+    insikt --help
 
   Register with your agent (Hermes example):
     hermes mcp add insikt --command "$BIN_DIR/insikt mcp"

@@ -54,6 +54,11 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .live .pulse{width:7px;height:7px;border-radius:50%;background:var(--off)}
   .live.on .pulse{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:pulse 2s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .rbtn{background:var(--sc2);border:1px solid var(--line);color:var(--on2);width:34px;height:34px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0}
+  .rbtn:hover{color:var(--on);border-color:rgba(108,114,255,.55)}
+  .rbtn .ic{width:16px;height:16px}
+  .rbtn.spin .ic{animation:rot .8s linear infinite;transform-origin:50% 50%}
+  @keyframes rot{to{transform:rotate(360deg)}}
   .chip{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:12.5px;padding:6px 13px;border-radius:999px}
   .chip .d{width:7px;height:7px;border-radius:50%}
   .chip.ok{background:rgba(87,195,255,.16);color:var(--ok)} .chip.ok .d{background:var(--ok);box-shadow:0 0 7px var(--ok)}
@@ -253,6 +258,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <span class="brand"><span class="mk"></span>Insikt</span>
     <span class="hmeta num" id="hmeta"></span>
     <span class="live" id="live"><span class="pulse"></span><span id="liveT">snapshot</span></span>
+    <button class="rbtn" id="refresh" title="Refresh now" aria-label="Refresh" hidden><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v5h-5"/></svg></button>
     <span class="chip" id="chip"></span>
   </div></div>
   <nav><div class="wrap" id="nav"></div></nav>
@@ -679,6 +685,16 @@ function initAgentGraph(){
   canvas.addEventListener("wheel",e=>{e.preventDefault();const r=canvas.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,f=e.deltaY<0?1.1:.9,wx=(mx-view.x)/view.k,wy=(my-view.y)/view.k;view.k=Math.min(6,Math.max(.15,view.k*f));view.x=mx-wx*view.k;view.y=my-wy*view.k;draw();},{passive:false});
 }
 
+/* ---------- manual refresh (force a full re-collect) ---------- */
+async function doRefresh(){
+  const b=$("refresh");if(!b||b.disabled)return;b.classList.add("spin");b.disabled=true;
+  try{
+    const r=await fetch("/api/refresh");const st=await r.json();
+    if(st&&st.sections){DATA.meta=st.meta;DATA.status=st.status;DATA.sections=st.sections;DATA.agent=st.agent;if(st.history)HIST=st.history.slice();}
+    renderBar();buildNav();render(true);
+  }catch(e){}
+  b.classList.remove("spin");b.disabled=false;
+}
 /* ---------- live (SSE) ---------- */
 function pushHist(host){
   const d=(host&&host.data)||{};
@@ -700,6 +716,7 @@ function startLive(){
 }
 
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&OPENM)closeModal();});
+if(LIVE){const _rb=$("refresh");if(_rb){_rb.hidden=false;_rb.onclick=doRefresh;}}
 renderBar();buildNav();render(true);startLive();
 </script>
 </body>

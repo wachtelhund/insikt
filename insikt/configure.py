@@ -280,15 +280,38 @@ def _load_profile_file(path: Path) -> Optional[dict]:
     return data
 
 
-def _confirm(prompt: str, assume_yes: bool) -> bool:
+def _confirm(prompt: str, assume_yes: bool, default_yes: bool = False) -> bool:
     if assume_yes:
         return True
     if not sys.stdin.isatty():
-        return False
+        return default_yes
     try:
-        return input(prompt).strip().lower() in ("y", "yes")
+        r = input(prompt).strip().lower()
+        if r == "":
+            return default_yes
+        return r in ("y", "yes")
     except (EOFError, KeyboardInterrupt):
         return False
+
+
+def _apply_agent_profile(profile: dict, args) -> Optional[int]:
+    """Drive the agent to author + apply a profile. Returns an exit code if it
+    handled things (saved or saved-a-suggestion), or None to fall through."""
+    name = _detect_agent_cli()
+    print(f"asking your agent ({name}) to author a profile for this host…")
+    authored, note = agent_author_profile(profile, timeout=getattr(args, "timeout", 240))
+    if authored is None:
+        print(f"agent path unavailable: {note}", file=sys.stderr)
+        return None
+    print(f"profile {note}; validating…")
+    _print_validation(validate(authored))
+    if _confirm("apply and save? [Y/n] ", args.yes, default_yes=True):
+        print(f"saved → {save_profile(authored)}")
+        return 0
+    sug = PROFILE_PATH.with_suffix(".suggested.yaml")
+    save_profile_to(authored, sug)
+    print(f"not saved. review it at {sug}, then: insikt configure --apply {sug}")
+    return 0
 
 
 # --- entry point ----------------------------------------------------------
@@ -318,22 +341,12 @@ def run_configure(args) -> int:
         return 0
 
     if getattr(args, "agent", False):
-        print("asking your agent to author a profile for this host…")
-        authored, note = agent_author_profile(profile, timeout=getattr(args, "timeout", 240))
-        if authored is None:
-            print(f"agent path unavailable: {note}", file=sys.stderr)
-            print("fall back to: insikt configure --describe  (hand the JSON to your agent),")
-            print("then:        insikt configure --apply <file>")
-            return 1
-        print(f"profile {note}; validating…")
-        _print_validation(validate(authored))
-        if _confirm("apply and save? [y/N] ", args.yes):
-            print(f"saved → {save_profile(authored)}")
-            return 0
-        sug = PROFILE_PATH.with_suffix(".suggested.yaml")
-        save_profile_to(authored, sug)
-        print(f"not saved. review it at {sug}, then: insikt configure --apply {sug}")
-        return 0
+        rc = _apply_agent_profile(profile, args)
+        if rc is not None:
+            return rc
+        print("fall back to: insikt configure --describe  (hand the JSON to your agent),")
+        print("then:        insikt configure --apply <file>")
+        return 1
 
     if getattr(args, "auto", False):
         prof = detect_profile()
@@ -342,7 +355,17 @@ def run_configure(args) -> int:
         print(f"saved → {save_profile(prof)}")
         return 0
 
-    # default: propose + (optionally) save, never dead-end.
+    # default: AI-first. Offer to let the agent author the config, else autodetect.
+    agent_name = _detect_agent_cli()
+    if agent_name and _confirm(
+        f"Let your agent ({agent_name}) author Insikt's configuration for this host? [Y/n] ",
+        args.yes, default_yes=True,
+    ):
+        rc = _apply_agent_profile(profile, args)
+        if rc is not None:
+            return rc
+        print("falling back to autodetect…\n")
+
     prof = detect_profile()
     print("proposed profile for this host:\n")
     import yaml
@@ -351,12 +374,12 @@ def run_configure(args) -> int:
     print("this would surface:")
     _print_validation(validate(prof))
     print()
-    if _confirm("save this as ~/.insikt/profile.yaml? [y/N] ", args.yes):
+    if _confirm("save this as ~/.insikt/profile.yaml? [Y/n] ", args.yes, default_yes=True):
         print(f"saved → {save_profile(prof)}")
         return 0
     sug = PROFILE_PATH.with_suffix(".suggested.yaml")
     save_profile_to(prof, sug)
-    print(f"not saved (the built-in defaults still work). Next steps:")
+    print("not saved (the built-in defaults still work). Next steps:")
     print(f"  • review/edit {sug}, then  insikt configure --apply {sug}")
     print(f"  • or let your agent do it:  insikt configure --agent")
     return 0

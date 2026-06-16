@@ -40,8 +40,11 @@ class OpenClawCollector(Collector):
     framework = FRAMEWORK
     supported_versions = ">=2.0,<3.0"
 
-    def __init__(self, home: Optional[str | Path] = None):
-        raw = home or os.environ.get("OPENCLAW_HOME") or "~/.openclaw"
+    def __init__(self, home: Optional[str | Path] = None, profile: Optional[dict] = None):
+        from ..profiles import load_profile
+
+        self.profile = profile or load_profile(FRAMEWORK, home=str(home) if home else None)
+        raw = home or self.profile.get("home") or os.environ.get("OPENCLAW_HOME") or "~/.openclaw"
         self.home = Path(raw).expanduser()
 
     def available(self) -> bool:

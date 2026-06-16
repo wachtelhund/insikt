@@ -1,0 +1,4 @@
+{"type": "user", "timestamp": "2026-06-14T09:59:00Z", "message": {"role": "user", "content": "check the repo"}}
+{"type": "assistant", "timestamp": "2026-06-14T10:00:00Z", "message": {"model": "claude-opus-4-8", "usage": {"input_tokens": 100, "output_tokens": 50}, "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "git status"}}]}}
+{"type": "assistant", "timestamp": "2026-06-14T10:01:00Z", "message": {"model": "claude-opus-4-8", "usage": {"input_tokens": 80, "output_tokens": 40}, "content": [{"type": "tool_use", "name": "Write", "input": {"file_path": "/tmp/report.md"}}]}}
+{"type": "assistant", "timestamp": "2026-06-14T10:02:00Z", "message": {"model": "claude-opus-4-8", "usage": {"input_tokens": 60, "output_tokens": 30}, "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/tmp/report.md"}}]}}

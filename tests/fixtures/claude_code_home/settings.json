@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": ["Bash(git:*)", "Bash(ls:*)", "Bash(curl:*)"],
+    "defaultMode": "auto"
+  },
+  "model": "claude-opus-4-8",
+  "enabledPlugins": { "vercel@official": true },
+  "skipDangerousModePermissionPrompt": true,
+  "skipAutoPermissionPrompt": true
+}

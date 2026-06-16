@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from .collectors import HermesCollector, OpenClawCollector
+from .collectors import ClaudeCodeCollector, HermesCollector, OpenClawCollector
 from .hygiene import HygieneEngine, load_advisory_feed
 from .model import Graph, NodeType
 from .report import render_report
@@ -36,6 +36,8 @@ def _build_collectors(args) -> list:
         cols.append(HermesCollector(home=args.hermes_home))
     if not args.no_openclaw:
         cols.append(OpenClawCollector(home=args.openclaw_home))
+    if not args.no_claude_code:
+        cols.append(ClaudeCodeCollector(home=args.claude_code_home))
     return cols
 
 
@@ -472,8 +474,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(sp)
     sp.add_argument("--hermes-home", default=None, help="path to a Hermes home (default $HERMES_HOME or ~/.hermes)")
     sp.add_argument("--openclaw-home", default=None, help="path to an OpenClaw home (default $OPENCLAW_HOME or ~/.openclaw)")
+    sp.add_argument("--claude-code-home", default=None, help="path to a Claude Code home (default $CLAUDE_HOME or ~/.claude)")
     sp.add_argument("--no-hermes", action="store_true", help="skip the Hermes collector")
     sp.add_argument("--no-openclaw", action="store_true", help="skip the OpenClaw collector")
+    sp.add_argument("--no-claude-code", action="store_true", help="skip the Claude Code collector")
     sp.add_argument("--out", default=DEFAULT_OUT, help=f"HTML output path (default {DEFAULT_OUT})")
     sp.add_argument("--feed", default=None, help="advisory feed JSON path (default: bundled sample)")
     sp.add_argument("--no-feed", action="store_true", help="do not load any advisory feed")

@@ -113,10 +113,31 @@ When you change collector output or views, re-run the scan against the fixtures
 and eyeball `overview.html` — visual output beats raw data for catching
 regressions (the per-skill-reach bug was caught this way, not by a unit test).
 
+## Collectors & profiles
+
+Three collectors, each profile-driven (`insikt/profiles.py`; override at
+`~/.insikt/profiles/<fw>.yaml`):
+
+- **`collectors/hermes.py`** — validated against a live `~/.hermes`.
+- **`collectors/claude_code.py`** — validated against a live `~/.claude`
+  (commands/agents/skills, `settings.json` permission posture, MCP servers,
+  `projects/**/*.jsonl` tool-use + model usage; session parse is bounded by
+  `max_session_files`/`max_actions`).
+- **`collectors/openclaw.py`** — best-effort, **not** validated against a real
+  install (the fixture is invented). Treat with suspicion until verified.
+
+`insikt configure` (`configure.py`) proposes/validates/applies a profile and can
+drive the agent's own CLI (`AGENT_CLI`: `hermes -z`, `claude -p`) to author one.
+Adding a framework = a collector + a `BUILTINS` profile + entries in
+`FRAMEWORK_MARKERS`, `validate_profile`, the `COLLECTORS` exports, and
+`cli._build_collectors`; optionally an `AGENT_CLI` driver and `_scan_posture`
+checks.
+
 ## Status / what's deferred
 
-Built: v0 (Hermes collector → snapshot store → overview.html) **plus** the
-read-only MCP server (v1 core) and the static hygiene engine (v2 core), plus a
-lean OpenClaw collector to prove the cross-framework split. Deferred and kept
-pluggable: live-capture hooks (§10.1), Honcho introspection, the live web-UI
-server, signed/reproducible releases, and the Scanopy/Homelable overlay (v3+).
+Built: v0 (collectors → snapshot store → overview.html) **plus** the read-only
+MCP server (v1 core), the static hygiene engine (v2 core), and agent-assisted
+`insikt configure`. Deferred and kept pluggable: live-capture hooks (§10.1),
+Honcho introspection, the live web-UI server, signed/reproducible releases, the
+generic profile interpreter (for frameworks with no collector), and the
+Scanopy/Homelable overlay (v3+).

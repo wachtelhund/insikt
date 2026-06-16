@@ -6,6 +6,7 @@ agent support is one new collector and nothing else changes (README §3, §7).
 """
 
 from .base import Collector, CollectorResult
+from .claude_code import ClaudeCodeCollector
 from .hermes import HermesCollector
 from .openclaw import OpenClawCollector
 
@@ -14,4 +15,5 @@ __all__ = [
     "CollectorResult",
     "HermesCollector",
     "OpenClawCollector",
+    "ClaudeCodeCollector",
 ]

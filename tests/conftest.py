@@ -6,6 +6,7 @@ import pytest
 FIXTURES = Path(__file__).parent / "fixtures"
 HERMES_HOME = FIXTURES / "hermes_home"
 OPENCLAW_HOME = FIXTURES / "openclaw_home"
+CLAUDE_CODE_HOME = FIXTURES / "claude_code_home"
 
 # Fixed clock so windowed queries are deterministic. currentDate in the spec is
 # 2026-06-15, and the fixture actions are dated 2026-06-14, so "yesterday" hits.
@@ -39,6 +40,18 @@ def openclaw_graph(openclaw_home):
     from insikt.collectors import OpenClawCollector
 
     return OpenClawCollector(home=openclaw_home).collect().graph
+
+
+@pytest.fixture
+def claude_code_home():
+    return str(CLAUDE_CODE_HOME)
+
+
+@pytest.fixture
+def claude_code_graph(claude_code_home):
+    from insikt.collectors import ClaudeCodeCollector
+
+    return ClaudeCodeCollector(home=claude_code_home).collect().graph
 
 
 @pytest.fixture

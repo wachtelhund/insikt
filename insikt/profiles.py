@@ -63,7 +63,26 @@ OPENCLAW_PROFILE: dict = {
     "usage_file": "usage.jsonl",
 }
 
-BUILTINS = {"hermes": HERMES_PROFILE, "openclaw": OPENCLAW_PROFILE}
+# Built-in profile for the real Claude Code layout (~/.claude).
+CLAUDE_CODE_PROFILE: dict = {
+    "framework": "claude-code",
+    "home": "~/.claude",
+    "agent_id": "default",
+    "settings_files": ["settings.json", "settings.local.json"],
+    "credentials_file": ".credentials.json",
+    "mcp_auth_cache": "mcp-needs-auth-cache.json",
+    "skill_globs": ["skills/**/SKILL.md", "commands/**/*.md", "agents/**/*.md"],
+    "sessions_glob": "projects/**/*.jsonl",
+    "history_file": "history.jsonl",
+    "max_session_files": 25,
+    "max_actions": 400,
+}
+
+BUILTINS = {
+    "hermes": HERMES_PROFILE,
+    "openclaw": OPENCLAW_PROFILE,
+    "claude-code": CLAUDE_CODE_PROFILE,
+}
 
 
 def _deep_merge(base: dict, over: dict) -> dict:

@@ -249,12 +249,20 @@ class HygieneEngine:
         so this never produces noise for collectors that don't populate it."""
         out: list[Finding] = []
         checks = [
+            # Hermes
             ("tirith_enabled", False, Severity.MEDIUM, "Skill security scanner is disabled",
              "the agent's static skill scanner (tirith) is turned off"),
             ("allow_lazy_installs", True, Severity.MEDIUM, "Unattended skill installs are allowed",
              "skills can be installed without explicit confirmation"),
             ("guard_agent_created", False, Severity.MEDIUM, "Self-authored skills are not guarded",
              "skills the agent writes for itself are not gated before use"),
+            # Claude Code
+            ("skip_dangerous_prompt", True, Severity.MEDIUM, "Dangerous-mode permission prompt is skipped",
+             "skipDangerousModePermissionPrompt is on — risky actions aren't confirmed"),
+            ("skip_auto_prompt", True, Severity.MEDIUM, "Auto-permission prompt is skipped",
+             "skipAutoPermissionPrompt is on"),
+            ("permission_mode", "bypassPermissions", Severity.HIGH, "Permission checks are bypassed",
+             "defaultMode is bypassPermissions — tools run without permission gating"),
         ]
         for agent in graph.by_type(NodeType.AGENT):
             p = agent.props

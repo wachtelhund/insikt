@@ -30,6 +30,7 @@ from .redact import redact_secrets
 FRAMEWORK_MARKERS = {
     "hermes": ["config.yaml", "skills"],
     "openclaw": ["openclaw.json"],
+    "claude-code": ["settings.json", "projects"],
 }
 
 # Candidate paths probed by autodetect, keyed by profile field.
@@ -104,13 +105,15 @@ def autodetect_profile(home: Path, framework: str) -> dict:
 
 def validate_profile(home: Path, framework: str, profile: dict) -> dict:
     """Run the matching collector with this profile and report what it found."""
-    from .collectors import HermesCollector, OpenClawCollector
+    from .collectors import ClaudeCodeCollector, HermesCollector, OpenClawCollector
     from .model import NodeType
 
     if framework == "hermes":
         graph = HermesCollector(home=str(home), profile=profile).collect().graph
+    elif framework == "claude-code":
+        graph = ClaudeCodeCollector(home=str(home), profile=profile).collect().graph
     elif framework == "openclaw":
-        graph = OpenClawCollector(home=str(home)).collect().graph
+        graph = OpenClawCollector(home=str(home), profile=profile).collect().graph
     else:
         return {
             "supported": False,
@@ -186,6 +189,7 @@ def propose(home: Path, framework: Optional[str]) -> tuple[str, dict, dict]:
 # the manual hand-off.
 AGENT_CLI = {
     "hermes": {"bin": "hermes", "args": lambda prompt: ["-z", prompt, "-t", ""]},
+    "claude-code": {"bin": "claude", "args": lambda prompt: ["-p", prompt]},
 }
 
 _AGENT_INSTRUCTION = (

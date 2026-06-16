@@ -4,10 +4,11 @@ from insikt.cli import main
 from insikt.store import Store
 
 
-def test_scan_end_to_end(hermes_home, openclaw_home, tmp_path, capsys):
+def test_scan_end_to_end(hermes_home, openclaw_home, claude_code_home, tmp_path, capsys):
     db = str(tmp_path / "insikt.db")
     out = tmp_path / "overview.html"
-    rc = main(["scan", "--hermes-home", hermes_home, "--openclaw-home", openclaw_home, "--db", db, "--out", str(out)])
+    rc = main(["scan", "--hermes-home", hermes_home, "--openclaw-home", openclaw_home,
+               "--claude-code-home", claude_code_home, "--db", db, "--out", str(out)])
     assert rc == 0
     assert out.exists()
     html = out.read_text(encoding="utf-8")
@@ -17,7 +18,7 @@ def test_scan_end_to_end(hermes_home, openclaw_home, tmp_path, capsys):
     sid = store.latest_snapshot_id()
     assert sid is not None
     snap = store.get_snapshot(sid)
-    assert set(snap["meta"]["frameworks"]) == {"hermes", "openclaw"}
+    assert set(snap["meta"]["frameworks"]) == {"hermes", "openclaw", "claude-code"}
     assert snap["meta"]["hygiene"]["findings"]
     store.close()
 
@@ -32,6 +33,7 @@ def test_scan_no_state_returns_2(tmp_path, capsys):
     rc = main([
         "scan", "--hermes-home", str(tmp_path / "nohermes"),
         "--openclaw-home", str(tmp_path / "noclaw"),
+        "--claude-code-home", str(tmp_path / "noclaude"),
         "--db", db, "--out", str(out),
     ])
     assert rc == 2
@@ -41,8 +43,8 @@ def test_scan_no_state_returns_2(tmp_path, capsys):
 def test_scan_then_snapshots_and_diff(hermes_home, tmp_path, capsys):
     db = str(tmp_path / "insikt.db")
     out = str(tmp_path / "o.html")
-    main(["scan", "--hermes-home", hermes_home, "--no-openclaw", "--db", db, "--out", out])
-    main(["scan", "--hermes-home", hermes_home, "--no-openclaw", "--db", db, "--out", out])
+    main(["scan", "--hermes-home", hermes_home, "--no-openclaw", "--no-claude-code", "--db", db, "--out", out])
+    main(["scan", "--hermes-home", hermes_home, "--no-openclaw", "--no-claude-code", "--db", db, "--out", out])
 
     rc = main(["snapshots", "--db", db])
     assert rc == 0
@@ -57,7 +59,7 @@ def test_scan_then_snapshots_and_diff(hermes_home, tmp_path, capsys):
 def test_report_subcommand(hermes_home, tmp_path, capsys):
     db = str(tmp_path / "insikt.db")
     out = str(tmp_path / "o.html")
-    main(["scan", "--hermes-home", hermes_home, "--no-openclaw", "--db", db, "--out", out])
+    main(["scan", "--hermes-home", hermes_home, "--no-openclaw", "--no-claude-code", "--db", db, "--out", out])
     out2 = tmp_path / "regen.html"
     rc = main(["report", "--db", db, "--out", str(out2)])
     assert rc == 0

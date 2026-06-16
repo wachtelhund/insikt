@@ -32,7 +32,7 @@ def test_scan_does_not_persist_raw_body(hermes_home, tmp_path):
     from insikt.cli import main
 
     db = str(tmp_path / "i.db")
-    main(["scan", "--hermes-home", hermes_home, "--no-openclaw", "--db", db, "--out", str(tmp_path / "o.html")])
+    main(["scan", "--hermes-home", hermes_home, "--no-openclaw", "--no-claude-code", "--db", db, "--out", str(tmp_path / "o.html")])
     store = Store(db)
     graph = store.load_graph()
     store.close()

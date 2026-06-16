@@ -120,14 +120,10 @@ class HygieneEngine:
         # 2. Static content scan -> one finding per detected category.
         caps = self._skill_capabilities(props)
         for category, evidence in caps.items():
-            sev = Severity(rules.CATEGORY_SEVERITY[category])
-            # A self-authored skill exercising a sensitive capability is notable.
-            if props.get("self_authored") and category in ("shell", "network"):
-                sev = Severity.MEDIUM if sev == Severity.LOW else sev
             out.append(
                 Finding(
                     id=f"cap:{category}:{sid}",
-                    severity=sev,
+                    severity=Severity(rules.CATEGORY_SEVERITY[category]),
                     title=rules.CATEGORY_TITLE[category],
                     detail=f"{skill.label}: {', '.join(evidence[:3])}",
                     node_id=sid,
@@ -153,17 +149,24 @@ class HygieneEngine:
         # 3. Capability blast radius — the exfil triad.
         present = set(caps.keys())
         if _EXFIL_TRIAD.issubset(present):
+            # A bundled/official skill combining these is usually expected
+            # capability; a self-authored or community skill doing so is the
+            # supply-chain shape that actually warrants escalation (SPEC §6, §8).
+            self_authored = bool(props.get("self_authored"))
+            sev = Severity.CRITICAL if self_authored else Severity.MEDIUM
+            origin = "self-authored/local" if self_authored else "bundled"
             out.append(
                 Finding(
                     id=f"triad:{sid}",
-                    severity=Severity.CRITICAL,
+                    severity=sev,
                     title="Exfiltration triad: credential read + network egress + shell",
                     detail=(
-                        f"{skill.label} combines all three capabilities in one skill — "
-                        "the classic data-exfiltration shape."
+                        f"{skill.label} ({origin}) combines all three capabilities in one skill"
+                        + (" — the classic data-exfiltration shape." if self_authored
+                           else "; expected for a bundled skill, shown for completeness.")
                     ),
                     node_id=sid,
-                    factors=["credential_read", "network", "shell", *(["self-authored"] if props.get("self_authored") else [])],
+                    factors=["credential_read", "network", "shell", origin],
                 )
             )
         return out

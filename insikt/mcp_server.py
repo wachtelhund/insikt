@@ -136,6 +136,28 @@ def explain_impl(db_path, node_id) -> dict:
         return detail
 
 
+def describe_layout_impl(db_path, framework=None) -> dict:
+    from pathlib import Path
+
+    from . import configure as cfg
+    from .profiles import BUILTINS
+
+    with Store(db_path) as store:
+        store.log_query("insikt_describe_layout", {"framework": framework}, None)
+    home = None
+    if framework and framework in BUILTINS:
+        home = Path(BUILTINS[framework]["home"]).expanduser()
+    if home is None or not home.is_dir():
+        for prof in BUILTINS.values():
+            h = Path(prof.get("home", "")).expanduser()
+            if h.is_dir():
+                home = h
+                break
+    if home is None or not home.is_dir():
+        return {"error": "no_home", "message": "Could not locate an agent home; pass `framework`."}
+    return cfg.describe(home, framework)
+
+
 def self_report_impl(db_path) -> dict:
     with Store(db_path) as store:
         store.log_query("insikt_self_report", {}, None)
@@ -217,6 +239,14 @@ def build_server(db_path: str | Path = DEFAULT_DB):
         """Insikt's own version, provenance/signature, and EXACT permissions — so
         the agent can prove the tool to the user before or after install."""
         return self_report_impl(db_path)
+
+    @mcp.tool()
+    def insikt_describe_layout(framework: Optional[str] = None) -> dict:
+        """Read-only: a secret-redacted digest of the agent's home directory plus
+        the profile schema, so YOU (the agent) can author or repair Insikt's
+        collector profile for this setup. Return a profile; a human applies it
+        with `insikt configure --apply <file>`. This never writes anything."""
+        return describe_layout_impl(db_path, framework=framework)
 
     return mcp
 

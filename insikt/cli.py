@@ -268,6 +268,84 @@ def cmd_queries(args) -> int:
         store.close()
 
 
+def _resolve_home(args) -> Path:
+    from .profiles import BUILTINS
+
+    if getattr(args, "home", None):
+        return Path(args.home).expanduser()
+    if getattr(args, "framework", None) and args.framework in BUILTINS:
+        return Path(BUILTINS[args.framework].get("home", "~")).expanduser()
+    for prof in BUILTINS.values():
+        h = Path(prof.get("home", "")).expanduser()
+        if h.is_dir():
+            return h
+    return Path("~/.hermes").expanduser()
+
+
+def _confirm(prompt: str, assume_yes: bool) -> bool:
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        print("  (non-interactive — re-run with --yes to save, or edit the file directly)")
+        return False
+    try:
+        return input(f"{prompt} [Y/n]: ").strip().lower() in ("", "y", "yes")
+    except EOFError:
+        return False
+
+
+def cmd_configure(args) -> int:
+    """Propose / validate / apply a collector profile (agent-assisted)."""
+    import yaml
+
+    from . import configure as cfg
+    from .profiles import load_profile, save_profile
+
+    home = _resolve_home(args)
+    framework = args.framework or cfg.detect_framework(home) or "unknown"
+
+    if args.show:
+        print(yaml.safe_dump(load_profile(framework, home=str(home)), sort_keys=False))
+        return 0
+
+    if args.describe:
+        print(json.dumps(cfg.describe(home, framework), indent=2, default=str))
+        return 0
+
+    if args.apply:
+        text = Path(args.apply).expanduser().read_text(encoding="utf-8")
+        try:
+            profile = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            print(f"could not parse {args.apply}: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(profile, dict):
+            print("profile must be a mapping", file=sys.stderr)
+            return 2
+        framework = profile.get("framework", framework)
+        validation = cfg.validate_profile(home, framework, profile)
+    else:
+        framework, profile, validation = cfg.propose(home, framework)
+        print(f"proposed profile for '{framework}' (home {home}):\n")
+        print(yaml.safe_dump(profile, sort_keys=False))
+
+    _print_validation(validation)
+    if _confirm("Save this profile?", args.yes):
+        path = save_profile(framework, profile)
+        print(f"saved → {path}")
+    return 0
+
+
+def _print_validation(v: dict) -> None:
+    if not v.get("supported", True):
+        print(f"  ⚠ {v.get('message')}")
+        return
+    c = v.get("counts", {})
+    print("  validation: " + " ".join(f"{k}={val}" for k, val in c.items()))
+    if v.get("partial"):
+        print(f"  ⚠ partial: {'; '.join(v.get('reasons', []))}")
+
+
 def cmd_update(args) -> int:
     """Update Insikt to the latest release, re-installing from the source the
     installer recorded (a clone path, a git URL, or the published package).
@@ -360,6 +438,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(sp)
     sp.add_argument("--limit", type=int, default=50)
     sp.set_defaults(func=cmd_queries)
+
+    sp = sub.add_parser("configure", help="propose/validate/apply a collector profile for your agent")
+    sp.add_argument("--framework", default=None, help="hermes | openclaw | … (default: autodetect)")
+    sp.add_argument("--home", default=None, help="agent home dir (default: framework default)")
+    sp.add_argument("--apply", default=None, metavar="FILE", help="apply an agent-authored profile (yaml/json)")
+    sp.add_argument("--describe", action="store_true", help="emit a layout digest + schema for an agent to author a profile")
+    sp.add_argument("--show", action="store_true", help="print the current effective profile")
+    sp.add_argument("--yes", action="store_true", help="save without prompting")
+    sp.set_defaults(func=cmd_configure)
 
     sp = sub.add_parser("update", help="update insikt to the latest release")
     sp.set_defaults(func=cmd_update)

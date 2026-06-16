@@ -71,4 +71,5 @@ def test_build_server_registers_six_tools():
         "insikt_diff",
         "insikt_explain",
         "insikt_self_report",
+        "insikt_describe_layout",
     }

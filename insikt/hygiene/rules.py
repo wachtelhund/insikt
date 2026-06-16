@@ -78,11 +78,14 @@ _CAPABILITY_PATTERNS: dict[str, list[re.Pattern]] = {
 }
 
 # Severity each detected category contributes on its own (string keys map to
-# model.Severity in the engine).
+# model.Severity in the engine). A single capability is INVENTORY, not a finding
+# — capable skills routinely use shell/network/credentials — so these are info
+# (weight 0) and don't inflate the score. The dangerous *combination* (triad),
+# obfuscation, and auto-update are what carry weight.
 CATEGORY_SEVERITY = {
-    "shell": "low",
-    "network": "low",
-    "credential_read": "low",
+    "shell": "info",
+    "network": "info",
+    "credential_read": "info",
     "obfuscation": "high",
     "auto_update": "medium",
 }

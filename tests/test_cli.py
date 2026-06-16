@@ -65,6 +65,23 @@ def test_report_subcommand(hermes_home, tmp_path, capsys):
     assert "pi-temp-watch" in out2.read_text(encoding="utf-8")
 
 
+def test_configure_agent_handoff(hermes_home, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("insikt.profiles.PROFILE_DIR", tmp_path / "profiles")
+    rc = main(["configure", "--home", hermes_home, "--framework", "hermes", "--agent"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "insikt_describe_layout" in out  # the agent is told what to call
+    assert (tmp_path / "configure-request.json").exists()
+
+
+def test_configure_auto_heuristic(hermes_home, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("insikt.profiles.PROFILE_DIR", tmp_path / "profiles")
+    rc = main(["configure", "--home", hermes_home, "--framework", "hermes", "--auto", "--yes"])
+    assert rc == 0
+    assert "proposed profile" in capsys.readouterr().out
+    assert (tmp_path / "profiles" / "hermes.yaml").exists()
+
+
 def test_queries_subcommand_after_mcp_impl(populated_db, capsys):
     from insikt import mcp_server
 

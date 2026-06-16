@@ -323,16 +323,59 @@ def cmd_configure(args) -> int:
             print("profile must be a mapping", file=sys.stderr)
             return 2
         framework = profile.get("framework", framework)
-        validation = cfg.validate_profile(home, framework, profile)
-    else:
-        framework, profile, validation = cfg.propose(home, framework)
-        print(f"proposed profile for '{framework}' (home {home}):\n")
-        print(yaml.safe_dump(profile, sort_keys=False))
+        _print_validation(cfg.validate_profile(home, framework, profile))
+        if _confirm("Save this profile?", args.yes):
+            print(f"saved → {save_profile(framework, profile)}")
+        return 0
 
+    # Propose flow: offer the agent (AI) path FIRST, heuristic as the fallback.
+    if args.agent:
+        use_agent = True
+    elif args.auto or args.yes:
+        use_agent = False
+    elif sys.stdin.isatty():
+        use_agent = _confirm(
+            "Use your agent to find the optimal configuration?\n"
+            "  (it knows your filesystem best — recommended; decline to use a heuristic instead)",
+            assume_yes=False,
+        )
+    else:
+        use_agent = False  # non-interactive: heuristic, unless --agent
+
+    if use_agent:
+        return _agent_handoff(home, framework)
+
+    framework, profile, validation = cfg.propose(home, framework)
+    print(f"\nproposed profile for '{framework}' (home {home}):\n")
+    print(yaml.safe_dump(profile, sort_keys=False))
     _print_validation(validation)
     if _confirm("Save this profile?", args.yes):
-        path = save_profile(framework, profile)
-        print(f"saved → {path}")
+        print(f"saved → {save_profile(framework, profile)}")
+    return 0
+
+
+def _agent_handoff(home: Path, framework: str) -> int:
+    """Hand configuration to the user's agent: write the layout digest + schema
+    and print the exact ask. The agent (which knows its own filesystem) authors
+    the profile and applies it. Insikt itself is not the LLM — the agent is."""
+    import json as _json
+
+    from . import configure as cfg
+    from .profiles import PROFILE_DIR
+
+    digest = cfg.describe(home, framework)
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    req = PROFILE_DIR.parent / "configure-request.json"
+    req.write_text(_json.dumps(digest, indent=2, default=str), encoding="utf-8")
+    print(f"\nLet your agent configure Insikt — it knows {home} best.\n")
+    print("  1. Make sure Insikt's MCP server is connected to your agent:")
+    print('       hermes mcp add insikt --command "insikt mcp"')
+    print("  2. Ask your agent:")
+    print('       "Configure Insikt for me: call insikt_describe_layout, write a')
+    print("        collector profile matching the schema, and run")
+    print(f'        `insikt configure --framework {framework} --apply <file>`."')
+    print(f"\n  (Digest also saved for manual hand-off → {req})")
+    print("  Prefer to do it yourself? Re-run with --auto for a heuristic profile.")
     return 0
 
 
@@ -445,6 +488,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--apply", default=None, metavar="FILE", help="apply an agent-authored profile (yaml/json)")
     sp.add_argument("--describe", action="store_true", help="emit a layout digest + schema for an agent to author a profile")
     sp.add_argument("--show", action="store_true", help="print the current effective profile")
+    sp.add_argument("--agent", action="store_true", help="hand configuration to your agent (skip the prompt)")
+    sp.add_argument("--auto", action="store_true", help="use the heuristic profile (skip the agent prompt)")
     sp.add_argument("--yes", action="store_true", help="save without prompting")
     sp.set_defaults(func=cmd_configure)
 

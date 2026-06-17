@@ -148,10 +148,10 @@ fi
 
 # --- 7. register Insikt with a local agent's MCP (best effort) ------------
 if command -v hermes >/dev/null 2>&1; then
-  if hermes mcp add insikt --command "$VENV/bin/insikt mcp" >/dev/null 2>&1; then
-    ok "registered Insikt with Hermes MCP (restart the Hermes gateway/session to load the tools)"
+  if yes | hermes mcp add insikt --command "$VENV/bin/insikt" --args mcp >/dev/null 2>&1; then
+    ok "registered Insikt with Hermes MCP (start a new Hermes session to load the tools)"
   else
-    say "register Insikt with your agent yourself:  hermes mcp add insikt --command \"$BIN_DIR/insikt mcp\""
+    say "register Insikt with your agent yourself:  hermes mcp add insikt --command \"$BIN_DIR/insikt\" --args mcp"
   fi
 fi
 

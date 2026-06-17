@@ -115,12 +115,12 @@ restarts and the agent can answer *"how was the Pi overnight?"* via the
 ## Connect it to your agent
 
 ```sh
-hermes mcp add insikt --command "insikt mcp"      # Hermes
-claude mcp add insikt -- insikt mcp               # Claude Code
+hermes mcp add insikt --command insikt --args mcp   # Hermes (the installer does this for you)
+claude mcp add insikt -- insikt mcp                 # Claude Code
 ```
 
-The agent gains read-only tools and reaches for them when asked introspection
-questions:
+(Then start a new agent session.) The agent gains read-only tools and reaches
+for them when asked introspection questions:
 
 | Tool | Answers |
 |---|---|

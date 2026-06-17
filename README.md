@@ -4,12 +4,19 @@ A local-first, read-only **observability dashboard for a self-hosted AI homelab*
 One offline page (or a live web server) that shows, in real time:
 
 - **Host** — Raspberry Pi temperature, CPU, memory, disk, load, uptime, and
-  under-voltage/throttle history.
+  under-voltage/throttle history. Live animated gauges plus **temperature/CPU/
+  memory trend charts** (tap one for a detailed history), so you can answer
+  *"how was the Pi overnight?"* — not just *"what is it now?"*.
 - **Hermes** — your agent's capabilities, action timeline, model spend, a hygiene
   report, and a capability graph (what each skill can reach).
 - **Honcho** *(optional)* — workspace / peer / session counts and queue status.
 - **Home Assistant** *(optional)* — version, run state, component and per-domain
   entity counts.
+
+Everything refreshes live (a **Refresh** button forces an immediate re-read), and
+it's all exposed back to your agent as a read-only MCP toolset. Optional opt-in
+extras: a chat box that talks to your agent, and a **real web terminal** (xterm.js
++ a PTY shell) on the overview.
 
 Read-only and local by default. Insikt reports **counts, versions, health and
 metrics** — never coordinates, entity names, peer names, memory contents, or
@@ -137,9 +144,15 @@ for them when asked introspection questions:
 
 ## What it looks like
 
-| Overview | Hygiene | Capability graph |
-|---|---|---|
-| ![Overview](docs/overview.png) | ![Hygiene](docs/hygiene.png) | ![Graph](docs/graph.png) |
+The **Host** view (top of this page) has the live gauges and trend charts. A few more:
+
+| Overview + terminal | Metric history (tap any chart) |
+|---|---|
+| ![Overview with terminal](docs/overview.png) | ![Metric detail](docs/detail.png) |
+
+| Hermes hygiene | Capability graph |
+|---|---|
+| ![Hygiene](docs/hygiene.png) | ![Graph](docs/graph.png) |
 
 ## Docs
 

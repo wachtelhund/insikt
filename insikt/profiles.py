@@ -64,6 +64,10 @@ DEFAULT_PROFILE: dict = {
         # dashboard. `cmd` is run with the message appended as a single argument
         # (no shell), e.g. ["hermes", "-z"] -> `hermes -z "<message>"`.
         "chat": {"enabled": False, "cmd": ["hermes", "-z"], "timeout": 180},
+        # Opt-in web TERMINAL on the overview. OFF by default — this is arbitrary
+        # shell execution on the host, reachable by anyone who can open the
+        # dashboard. Only enable on a network you fully trust.
+        "terminal": {"enabled": False, "timeout": 60},
     },
 }
 

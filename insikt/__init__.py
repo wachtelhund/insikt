@@ -9,4 +9,4 @@ server (``insikt.server``), and the read-only MCP toolset (``insikt.mcp_server``
 Adding a source is one new ``Collector``; everything downstream is source-agnostic.
 """
 
-__version__ = "0.0.3"
+__version__ = "0.0.4"

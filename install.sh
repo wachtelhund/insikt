@@ -146,6 +146,15 @@ else
   say "dashboard service skipped (INSIKT_NO_SERVE set) — start it with:  insikt serve"
 fi
 
+# --- 7. register Insikt with a local agent's MCP (best effort) ------------
+if command -v hermes >/dev/null 2>&1; then
+  if hermes mcp add insikt --command "$VENV/bin/insikt mcp" >/dev/null 2>&1; then
+    ok "registered Insikt with Hermes MCP (restart the Hermes gateway/session to load the tools)"
+  else
+    say "register Insikt with your agent yourself:  hermes mcp add insikt --command \"$BIN_DIR/insikt mcp\""
+  fi
+fi
+
 echo
 ok "done"
 case ":$PATH:" in *":$BIN_DIR:"*) :;; *) say "add this to your shell profile:  export PATH=\"$BIN_DIR:\$PATH\"";; esac

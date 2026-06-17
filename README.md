@@ -85,21 +85,32 @@ The profile is one plain, editable YAML at `~/.insikt/profile.yaml`. A connected
 agent can also author it over the read-only `insikt_describe_layout` MCP tool and
 hand the result to `insikt configure --apply`.
 
-### Chat with your agent (opt-in)
+### Chat & terminal (opt-in)
 
-The Hermes tab can include a chat box that talks to your local agent. It's **off
-by default** (so the server stays read-only); enable it in the profile:
+Two interactive panels are **off by default** (so the server stays read-only).
+Enable either in the profile — only on a network you fully trust:
 
 ```yaml
 server:
-  chat:
+  chat:        # a chat box on the Hermes tab that talks to your agent
     enabled: true
     cmd: ["hermes", "-z"]   # your message is appended as one argument (no shell)
     timeout: 180
+  terminal:    # a shell on the OVERVIEW tab — arbitrary command execution
+    enabled: true
+    timeout: 60
 ```
 
-This is the only non-`GET` route; the message runs `cmd` on the Pi and returns
-the reply. Only enable it on an overlay you trust.
+These are the only non-`GET` routes (`/api/chat`, `/api/exec`). The **terminal is
+real remote shell access** to the host for anyone who can open the dashboard —
+keep it off unless your overlay is trusted.
+
+### History
+
+The live server records host metrics (temperature/CPU/memory/disk) to
+`~/.insikt/metrics.jsonl` about once a minute, so the dashboard's charts survive
+restarts and the agent can answer *"how was the Pi overnight?"* via the
+`insikt_history` MCP tool — even though a single reading is just "now".
 
 ## Connect it to your agent
 
@@ -114,7 +125,8 @@ questions:
 | Tool | Answers |
 |---|---|
 | `insikt_system_state` | "How's everything doing?" — overall + every section |
-| `insikt_host` | Pi temperature, CPU, memory, disk, throttle history |
+| `insikt_host` | Pi temperature, CPU, memory, disk, throttle — right now |
+| `insikt_history` | temp/CPU/mem/disk over a window (min/max/avg) — "how was it overnight?" |
 | `insikt_hermes` | capability / timeline / cost / hygiene / graph |
 | `insikt_source` | a Honcho / Home Assistant section |
 | `insikt_describe_layout` | a redacted digest so the agent can author its own profile |

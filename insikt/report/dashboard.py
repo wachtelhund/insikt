@@ -238,6 +238,21 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .cclear{display:block;margin-top:10px;background:none;border:none;color:var(--on3);font-size:12px;cursor:pointer;padding:0}
   .cclear:hover{color:var(--on2);text-decoration:underline}
 
+  /* web terminal (opt-in) */
+  .term{display:flex;flex-direction:column;height:min(520px,68vh);background:#0a0f22;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .tlog{flex:1;min-height:0;overflow-y:auto;padding:14px 16px;font-size:12.5px;line-height:1.5}
+  .tempty{color:var(--on3)}
+  .tline{margin-bottom:9px}
+  .tcmd{color:var(--on);white-space:pre-wrap;overflow-wrap:anywhere}
+  .tcmd .tp{color:var(--cyan);margin-right:6px}
+  .tout{margin:3px 0 0;color:var(--on2);white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
+  .tout.err{color:#ff9da3}
+  .tform{flex:0 0 auto;display:flex;align-items:center;gap:9px;border-top:1px solid var(--line);padding:11px 14px;background:rgba(255,255,255,.02)}
+  .tprompt{color:var(--cyan);font-size:12.5px;white-space:nowrap;max-width:42%;overflow:hidden;text-overflow:ellipsis}
+  .tform input{flex:1;min-width:0;background:none;border:none;color:var(--on);font:inherit;font-size:12.5px;outline:none}
+  .tform button{flex:0 0 auto;background:var(--grad);color:#fff;border:none;border-radius:8px;padding:7px 15px;font-size:12px;cursor:pointer;font-family:inherit}
+  .tform button:disabled{opacity:.5}
+
   @media (max-width:560px){
     .wrap{padding:0 15px}
     .hmeta{flex-basis:100%;order:9}
@@ -290,6 +305,7 @@ const I={
   shield:'<path d="M12 21s7.5-3.6 7.5-9.4V5.3L12 2.6 4.5 5.3v6.3C4.5 17.4 12 21 12 21Z"/>',
   clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',layers:'<path d="M12 2.6 2.6 7 12 11.4 21.4 7 12 2.6Z"/><path d="m2.6 16.5 9.4 4.4 9.4-4.4"/><path d="m2.6 11.7 9.4 4.4 9.4-4.4"/>',
   chart:'<path d="M3.5 3.5v17h17"/><path d="m7 14 3.2-3.4 3 2.6L21 7"/>',gauge:'<path d="M12 13 16 9"/><path d="M4 18a8 8 0 1 1 16 0"/>',
+  terminal:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><line x1="13" y1="15" x2="17" y2="15"/>',
 };
 const ic=n=>`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[n]||""}</svg>`;
 const fmtTs=t=>(t||"").replace("T"," ").replace(/[.+Z].*/,"");
@@ -347,7 +363,8 @@ function render(animate){
   if(animate||!sec){$("main").innerHTML=`<section class="tab active">${inner}</section>`;}
   else{sec.innerHTML=inner;}  // in-place on live ticks: no entrance-animation flash
   if(CURRENT==="hermes")wireHermes();
-  if($("cform"))wireChat();  // overview chat (or any view that rendered a chat box)
+  if($("cform"))wireChat();      // chat box (overview or Hermes tab)
+  if($("tform"))wireTerminal();  // terminal (overview)
 }
 // reconcile the nav status dots in place (no rebuild) so live ticks don't flicker the navbar
 function updateNavDots(){
@@ -491,8 +508,11 @@ function renderOverview(){
     h+=`<div class="srccard clickable" data-src="${id}" onclick="activate('${id}')"><div class="h">${ic(icn)}<span class="nm">${esc(label)}</span>${chip(s.status,s.status==="off"?"off":s.status)}</div><div class="sm">${esc(s.summary||"")}</div></div>`;
   });
   h+=`</div>`;
-  // Chat with Hermes (replaces the old recommended-next-steps panel).
-  if(LIVE&&DATA.meta&&DATA.meta.chat&&(S().hermes||{}).available)
+  // Terminal (preferred) or chat — both opt-in, live-server only.
+  const m=DATA.meta||{};
+  if(LIVE&&m.terminal)
+    h+=`<div class="stitle">${ic("terminal")} Terminal <span class="hint">runs shell commands on this host</span></div>`+renderTerminal();
+  else if(LIVE&&m.chat&&(S().hermes||{}).available)
     h+=`<div class="stitle">${ic("brain")} Chat with Hermes</div>`+renderChat();
   return h;
 }
@@ -594,6 +614,44 @@ function wireChat(){
     inp.disabled=btn.disabled=false;saveChat();redrawChat();inp.focus();
   };
   if(clr)clr.onclick=()=>{CHATLOG=[];saveChat();redrawChat();};
+  inp&&inp.focus();
+}
+/* ---------- web terminal (live server only, opt-in) ---------- */
+let TERMLOG=[],TCWD="",CMDHIST=[],CMDIX=0;
+try{const _t=localStorage.getItem("insikt_term");if(_t){const o=JSON.parse(_t);TERMLOG=o.log||[];TCWD=o.cwd||"";CMDHIST=o.hist||[];}}catch(e){}
+function saveTerm(){try{localStorage.setItem("insikt_term",JSON.stringify({log:TERMLOG.slice(-40),cwd:TCWD,hist:CMDHIST.slice(-50)}));}catch(e){}}
+const _tempty='<div class="tempty">A shell on this host. Try: vcgencmd measure_temp · df -h · free -h · uptime · journalctl -p3 -n20</div>';
+const _termLine=e=>`<div class="tline"><div class="tcmd"><span class="tp">$</span>${esc(e.cmd)}</div>${e.out!==""&&e.out!=null?`<pre class="tout${e.code?" err":""}">${esc(e.out)}</pre>`:""}</div>`;
+function _shortCwd(c){if(!c)return"";const p=c.replace(/\/+$/,"").split("/").filter(Boolean);return p.length<=2?"/"+p.join("/"):"…/"+p.slice(-2).join("/");}
+const _prompt=()=>{const c=_shortCwd(TCWD);return (c?c+" ":"")+"$";};
+function renderTerminal(){
+  return `<div class="term">`+
+    `<div class="tlog" id="tlog">${TERMLOG.length?TERMLOG.map(_termLine).join(""):_tempty}</div>`+
+    `<form class="tform" id="tform"><span class="tprompt" id="tprompt">${esc(_prompt())}</span><input id="tin" placeholder="run a command…" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2000"><button type="submit">Run</button></form>`+
+    `</div>`+
+    `<button type="button" class="cclear" id="tclear" style="${TERMLOG.length?"":"display:none"}">Clear terminal</button>`;
+}
+function redrawTerm(){const l=$("tlog");if(l){l.innerHTML=TERMLOG.length?TERMLOG.map(_termLine).join(""):_tempty;l.scrollTop=l.scrollHeight;}
+  const c=$("tclear");if(c)c.style.display=TERMLOG.length?"":"none";const p=$("tprompt");if(p)p.textContent=_prompt();}
+function wireTerminal(){
+  const form=$("tform");if(!form)return;const inp=$("tin"),clr=$("tclear");
+  form.onsubmit=async e=>{e.preventDefault();const cmd=(inp.value||"").trim();if(!cmd)return;
+    if(cmd==="clear"||cmd==="cls"){TERMLOG=[];saveTerm();redrawTerm();inp.value="";return;}
+    CMDHIST.push(cmd);CMDIX=CMDHIST.length;inp.value="";inp.disabled=true;
+    TERMLOG.push({cmd,out:"…",code:null});redrawTerm();
+    try{
+      const r=await fetch("/api/exec",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({command:cmd})});
+      const d=await r.json().catch(()=>({}));
+      TERMLOG[TERMLOG.length-1]={cmd,out:(d&&(d.output!=null?d.output:d.error))||"",code:d?(d.code||0):1};
+      if(d&&d.cwd)TCWD=d.cwd;
+    }catch(err){TERMLOG[TERMLOG.length-1]={cmd,out:"(request failed — is the server reachable?)",code:1};}
+    inp.disabled=false;saveTerm();redrawTerm();inp.focus();
+  };
+  inp.onkeydown=ev=>{  // command history
+    if(ev.key==="ArrowUp"){if(CMDIX>0){CMDIX--;inp.value=CMDHIST[CMDIX]||"";ev.preventDefault();}}
+    else if(ev.key==="ArrowDown"){if(CMDIX<CMDHIST.length-1){CMDIX++;inp.value=CMDHIST[CMDIX]||"";}else{CMDIX=CMDHIST.length;inp.value="";}}
+  };
+  if(clr)clr.onclick=()=>{TERMLOG=[];saveTerm();redrawTerm();};
   inp&&inp.focus();
 }
 function renderHermesSub(){

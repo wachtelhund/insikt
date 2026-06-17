@@ -107,6 +107,37 @@ def source_impl(name: str, profile: Optional[dict] = None) -> dict:
     return _trim_section(sec)
 
 
+def history_impl(window: str = "12h", profile: Optional[dict] = None) -> dict:
+    """Host-metric history (temp/cpu/mem/disk) over a window, with min/max/avg.
+    Reads the on-disk log the live server records ~1/min — so it answers
+    'how was the Pi overnight?' even though a single reading is just 'now'."""
+    from pathlib import Path
+
+    from . import history
+    from .timewindow import parse_window
+
+    profile = profile or load_profile()
+    path = Path((profile.get("server") or {}).get("history_file") or history.DEFAULT_PATH).expanduser()
+    try:
+        start, end = parse_window(window)
+    except ValueError as exc:
+        return {"error": "bad_window", "message": str(exc)}
+    samples = history.load(path, since=start, until=end)
+    win = {"from": start.isoformat(), "to": end.isoformat(), "label": window}
+    if not samples:
+        return {"window": win, "count": 0, "summary": {}, "series": [],
+                "note": "No history recorded for that window. The live server (`insikt serve`) "
+                        "records ~1/min; if it hasn't been running there is nothing to report yet."}
+    summary = {m: history.summarize(samples, m) for m in ("temp", "cpu", "mem", "disk")}
+    series = history.load(path, since=start, until=end, limit=60)  # token-light
+    return {
+        "window": win,
+        "count": len(samples),
+        "summary": {m: v for m, v in summary.items() if v},
+        "series": [{k: s.get(k) for k in ("t", "temp", "cpu", "mem", "disk")} for s in series],
+    }
+
+
 def describe_layout_impl(profile: Optional[dict] = None) -> dict:
     """Read-only, secret-redacted digest of the Hermes home + reachability probes
     + the profile schema, so the agent can author/repair Insikt's profile for this
@@ -171,6 +202,13 @@ def build_server(profile: Optional[dict] = None):
         e.g. Home Assistant version/health/entity counts, or Honcho workspace/
         peer/session counts."""
         return source_impl(name, profile)
+
+    @mcp.tool()
+    def insikt_history(window: str = "12h") -> dict:
+        """Host metric HISTORY over time — temperature/CPU/memory/disk with
+        min/max/avg, recorded ~1/min by the live server. Answers "how was the Pi
+        temp overnight?". window ∈ today|yesterday|<N>[smhdw]|all|<ISO>/<ISO> (UTC)."""
+        return history_impl(window, profile)
 
     @mcp.tool()
     def insikt_describe_layout() -> dict:

@@ -17,8 +17,10 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Optional
 
+from . import history
 from .collectors.base import CRIT, OFF, OK, WARN
 from .collectors.system import SystemCollector
 from .profiles import load_profile
@@ -37,10 +39,16 @@ class StateCache:
         self._sys = SystemCollector(profile)  # persistent → real CPU% deltas
         self._stop = threading.Event()
         self._state = collect_state(profile, system_collector=self._sys)
-        # in-memory ring buffer of recent host samples for the history charts
-        # (~30 min at the default 5s cadence; resets on restart).
-        self._history: deque = deque(maxlen=360)
+        srv = profile.get("server") or {}
+        self._hist_path = Path(srv.get("history_file") or history.DEFAULT_PATH).expanduser()
+        self.exec_cwd = str(Path.home())  # persistent cwd for the optional web terminal
+        self._last_persist = 0.0
+        # in-memory ring buffer for the live dashboard charts (~30 min at 5s),
+        # seeded from the on-disk history so a restart isn't a blank chart.
+        seeded = history.load(self._hist_path, limit=360)
+        self._history: deque = deque(seeded, maxlen=360)
         self._history.append(self._sample())
+        self._persist()
 
     def _sample(self) -> dict:
         d = (self._state["sections"].get("system") or {}).get("data") or {}
@@ -64,6 +72,13 @@ class StateCache:
         live = [s["status"] for s in sections.values() if s.get("status") != OFF]
         return max(live, key=lambda s: _RANK.get(s, 0)) if live else OK
 
+    def _persist(self) -> None:
+        """Append a sample to the on-disk history, throttled to ~1/min."""
+        now = time.monotonic()
+        if now - self._last_persist >= 55.0:
+            self._last_persist = now
+            history.append(self._sample(), self._hist_path)
+
     def _refresh_host(self) -> None:
         sec = self._sys.safe_collect().to_dict()
         with self._lock:
@@ -71,12 +86,14 @@ class StateCache:
             self._state["status"] = self._rollup(self._state["sections"])
             self._state["meta"]["generated"] = _now()
             self._history.append(self._sample())
+            self._persist()
 
     def _refresh_full(self) -> None:
         st = collect_state(self.profile, system_collector=self._sys)
         with self._lock:
             self._state = st
             self._history.append(self._sample())
+            self._persist()
 
     def refresh_now(self) -> dict:
         """Force an immediate full re-collect and return the fresh state."""
@@ -157,9 +174,11 @@ def _make_handler(cache: StateCache):
 
         def do_POST(self):
             path = self.path.split("?", 1)[0]
-            chat = (cache.profile.get("server") or {}).get("chat") or {}
-            if path == "/api/chat" and chat.get("enabled"):
-                return self._chat(chat)
+            srv = cache.profile.get("server") or {}
+            if path == "/api/chat" and (srv.get("chat") or {}).get("enabled"):
+                return self._chat(srv["chat"])
+            if path == "/api/exec" and (srv.get("terminal") or {}).get("enabled"):
+                return self._exec(srv["terminal"])
             self._reject()
 
         def _chat(self, chat):
@@ -194,6 +213,51 @@ def _make_handler(cache: StateCache):
             except OSError as exc:
                 reply, ok = f"(could not run agent: {exc})", False
             self._send(200, json.dumps({"reply": reply, "ok": ok}), "application/json")
+
+        def _exec(self, term):
+            """Run a shell command for the (opt-in) web terminal. This is arbitrary
+            command execution by design — gated behind server.terminal.enabled."""
+            import shlex
+            import subprocess
+
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                n = 0
+            if n <= 0 or n > 16000:
+                return self._send(400, json.dumps({"error": "bad_request"}), "application/json")
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}")
+                cmd = str(body.get("command", "")).strip()
+            except (ValueError, AttributeError):
+                return self._send(400, json.dumps({"error": "bad_json"}), "application/json")
+            if not cmd:
+                return self._send(400, json.dumps({"error": "empty_command"}), "application/json")
+            cwd = cache.exec_cwd or str(Path.home())
+            timeout = float(term.get("timeout", 60))
+            sep = "\x1c"  # trailing-marker delimiter: <out><sep><cwd><sep><rc>
+            wrapped = (f'cd {shlex.quote(cwd)} 2>/dev/null || cd "$HOME"; {cmd}\n'
+                       f'__rc=$?; printf "{sep}%s{sep}%s" "$(pwd)" "$__rc"')
+            try:
+                r = subprocess.run(["/bin/sh", "-c", wrapped], capture_output=True, text=True, timeout=timeout)
+                out, rc = r.stdout or "", r.returncode
+                parts = out.rsplit(sep, 2)
+                if len(parts) == 3:
+                    out, newcwd, rc_s = parts
+                    if newcwd:
+                        cache.exec_cwd = newcwd
+                    try:
+                        rc = int(rc_s)
+                    except ValueError:
+                        pass
+                if r.stderr:
+                    out = (out + ("\n" if out and not out.endswith("\n") else "") + r.stderr)
+                output = out.rstrip("\n")
+            except subprocess.TimeoutExpired:
+                output, rc = f"(command timed out after {int(timeout)}s)", 124
+            except OSError as exc:
+                output, rc = f"(could not run command: {exc})", 127
+            self._send(200, json.dumps({"output": output[:20000], "code": rc, "cwd": cache.exec_cwd}), "application/json")
 
         def _sse(self):
             try:

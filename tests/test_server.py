@@ -253,3 +253,40 @@ def test_chat_enabled_other_paths_still_405():
     # meta.chat reflects the toggle so the dashboard can show the box.
     assert _chat_cache().state()["meta"]["chat"] is True
     assert _make_cache().state()["meta"]["chat"] is False
+
+
+def _term_cache(tmp_path=None) -> StateCache:
+    prof = dict(PROFILE)
+    prof["server"] = {"refresh": 5, "terminal": {"enabled": True, "timeout": 10}}
+    return StateCache(prof)
+
+
+def test_exec_disabled_by_default_is_405():
+    with _Server(_make_cache()) as srv:
+        req = urllib.request.Request(
+            srv.url("/api/exec"), data=b'{"command":"echo hi"}', method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("expected HTTP 405")
+        except urllib.error.HTTPError as e:
+            assert e.code == 405
+
+
+def test_exec_runs_command_and_persists_cwd():
+    with _Server(_term_cache()) as srv:
+        status, body = _post(srv, "/api/exec", {"command": "echo hello"})
+        assert status == 200 and body["code"] == 0
+        assert body["output"] == "hello"
+        # cd persists across requests (the wrapper tracks pwd)
+        _post(srv, "/api/exec", {"command": "cd /tmp"})
+        _, body2 = _post(srv, "/api/exec", {"command": "pwd"})
+        assert body2["output"].rstrip("/").endswith("tmp")
+        # non-zero exit is reported
+        _, body3 = _post(srv, "/api/exec", {"command": "false"})
+        assert body3["code"] != 0
+
+
+def test_meta_terminal_reflects_toggle():
+    assert _term_cache().state()["meta"]["terminal"] is True
+    assert _make_cache().state()["meta"]["terminal"] is False

@@ -8,9 +8,17 @@ import json
 
 def render_dashboard(state: dict, live: bool = False) -> str:
     data = json.dumps(state, default=str).replace("</", "<\\/")
+    # The terminal (xterm.js) is a live-server-only feature; its assets are
+    # served by the server, so the offline `scan` HTML stays a single file.
+    assets = ""
+    if live and (state.get("meta") or {}).get("terminal"):
+        assets = ('<link rel="stylesheet" href="/assets/xterm.css">'
+                  '<script src="/assets/xterm.js"></script>'
+                  '<script src="/assets/addon-fit.js"></script>')
     return (
         _TEMPLATE
         .replace("__TITLE__", _html.escape(f"Insikt — {state.get('meta', {}).get('host', 'system')}"))
+        .replace("__ASSETS__", assets)
         .replace("__LIVE__", "true" if live else "false")
         .replace("__DATA__", data)
     )
@@ -23,6 +31,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>__TITLE__</title>
+__ASSETS__
 <style>
   :root{
     /* brand palette — Color 800..100 neutral ramp + primary/secondary accents */
@@ -238,20 +247,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .cclear{display:block;margin-top:10px;background:none;border:none;color:var(--on3);font-size:12px;cursor:pointer;padding:0}
   .cclear:hover{color:var(--on2);text-decoration:underline}
 
-  /* web terminal (opt-in) */
-  .term{display:flex;flex-direction:column;height:min(520px,68vh);background:#0a0f22;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-  .tlog{flex:1;min-height:0;overflow-y:auto;padding:14px 16px;font-size:12.5px;line-height:1.5}
-  .tempty{color:var(--on3)}
-  .tline{margin-bottom:9px}
-  .tcmd{color:var(--on);white-space:pre-wrap;overflow-wrap:anywhere}
-  .tcmd .tp{color:var(--cyan);margin-right:6px}
-  .tout{margin:3px 0 0;color:var(--on2);white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
-  .tout.err{color:#ff9da3}
-  .tform{flex:0 0 auto;display:flex;align-items:center;gap:9px;border-top:1px solid var(--line);padding:11px 14px;background:rgba(255,255,255,.02)}
-  .tprompt{color:var(--cyan);font-size:12.5px;white-space:nowrap;max-width:42%;overflow:hidden;text-overflow:ellipsis}
-  .tform input{flex:1;min-width:0;background:none;border:none;color:var(--on);font:inherit;font-size:12.5px;outline:none}
-  .tform button{flex:0 0 auto;background:var(--grad);color:#fff;border:none;border-radius:8px;padding:7px 15px;font-size:12px;cursor:pointer;font-family:inherit}
-  .tform button:disabled{opacity:.5}
+  /* web terminal (xterm.js, opt-in) */
+  .term{height:min(560px,72vh);background:#0a0f22;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;padding:8px 6px 6px 12px}
+  .xtwrap{width:100%;height:100%}
+  .xtwrap .xterm{height:100%}
 
   @media (max-width:560px){
     .wrap{padding:0 15px}
@@ -351,7 +350,9 @@ function buildNav(){
   });
 }
 let CURRENT="overview";
-function activate(id){CURRENT=id;
+function activate(id){
+  if(CURRENT==="overview"&&id!=="overview")teardownTerminal();  // close the PTY shell on leave
+  CURRENT=id;
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===id));
   render(true);window.scrollTo(0,0);
   if(id==="hermes")initAgentGraphIfNeeded();
@@ -364,7 +365,7 @@ function render(animate){
   else{sec.innerHTML=inner;}  // in-place on live ticks: no entrance-animation flash
   if(CURRENT==="hermes")wireHermes();
   if($("cform"))wireChat();      // chat box (overview or Hermes tab)
-  if($("tform"))wireTerminal();  // terminal (overview)
+  if($("xterm"))wireTerminal();  // terminal (overview)
 }
 // reconcile the nav status dots in place (no rebuild) so live ticks don't flicker the navbar
 function updateNavDots(){
@@ -616,43 +617,34 @@ function wireChat(){
   if(clr)clr.onclick=()=>{CHATLOG=[];saveChat();redrawChat();};
   inp&&inp.focus();
 }
-/* ---------- web terminal (live server only, opt-in) ---------- */
-let TERMLOG=[],TCWD="",CMDHIST=[],CMDIX=0;
-try{const _t=localStorage.getItem("insikt_term");if(_t){const o=JSON.parse(_t);TERMLOG=o.log||[];TCWD=o.cwd||"";CMDHIST=o.hist||[];}}catch(e){}
-function saveTerm(){try{localStorage.setItem("insikt_term",JSON.stringify({log:TERMLOG.slice(-40),cwd:TCWD,hist:CMDHIST.slice(-50)}));}catch(e){}}
-const _tempty='<div class="tempty">A shell on this host. Try: vcgencmd measure_temp · df -h · free -h · uptime · journalctl -p3 -n20</div>';
-const _termLine=e=>`<div class="tline"><div class="tcmd"><span class="tp">$</span>${esc(e.cmd)}</div>${e.out!==""&&e.out!=null?`<pre class="tout${e.code?" err":""}">${esc(e.out)}</pre>`:""}</div>`;
-function _shortCwd(c){if(!c)return"";const p=c.replace(/\/+$/,"").split("/").filter(Boolean);return p.length<=2?"/"+p.join("/"):"…/"+p.slice(-2).join("/");}
-const _prompt=()=>{const c=_shortCwd(TCWD);return (c?c+" ":"")+"$";};
-function renderTerminal(){
-  return `<div class="term">`+
-    `<div class="tlog" id="tlog">${TERMLOG.length?TERMLOG.map(_termLine).join(""):_tempty}</div>`+
-    `<form class="tform" id="tform"><span class="tprompt" id="tprompt">${esc(_prompt())}</span><input id="tin" placeholder="run a command…" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2000"><button type="submit">Run</button></form>`+
-    `</div>`+
-    `<button type="button" class="cclear" id="tclear" style="${TERMLOG.length?"":"display:none"}">Clear terminal</button>`;
+/* ---------- web terminal (xterm.js + PTY over WebSocket, opt-in) ---------- */
+let TERM=null,TWS=null,TFIT=null,_termResize=null;
+function renderTerminal(){return `<div class="term"><div class="xtwrap" id="xterm"></div></div>`;}
+function _fitTerm(){try{if(TFIT)TFIT.fit();}catch(e){}}
+function teardownTerminal(){
+  if(_termResize){window.removeEventListener("resize",_termResize);_termResize=null;}
+  try{if(TWS){TWS.onclose=null;TWS.close();}}catch(e){}TWS=null;
+  try{if(TERM){TERM.dispose();}}catch(e){}TERM=null;
 }
-function redrawTerm(){const l=$("tlog");if(l){l.innerHTML=TERMLOG.length?TERMLOG.map(_termLine).join(""):_tempty;l.scrollTop=l.scrollHeight;}
-  const c=$("tclear");if(c)c.style.display=TERMLOG.length?"":"none";const p=$("tprompt");if(p)p.textContent=_prompt();}
 function wireTerminal(){
-  const form=$("tform");if(!form)return;const inp=$("tin"),clr=$("tclear");
-  form.onsubmit=async e=>{e.preventDefault();const cmd=(inp.value||"").trim();if(!cmd)return;
-    if(cmd==="clear"||cmd==="cls"){TERMLOG=[];saveTerm();redrawTerm();inp.value="";return;}
-    CMDHIST.push(cmd);CMDIX=CMDHIST.length;inp.value="";inp.disabled=true;
-    TERMLOG.push({cmd,out:"…",code:null});redrawTerm();
-    try{
-      const r=await fetch("/api/exec",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({command:cmd})});
-      const d=await r.json().catch(()=>({}));
-      TERMLOG[TERMLOG.length-1]={cmd,out:(d&&(d.output!=null?d.output:d.error))||"",code:d?(d.code||0):1};
-      if(d&&d.cwd)TCWD=d.cwd;
-    }catch(err){TERMLOG[TERMLOG.length-1]={cmd,out:"(request failed — is the server reachable?)",code:1};}
-    inp.disabled=false;saveTerm();redrawTerm();inp.focus();
-  };
-  inp.onkeydown=ev=>{  // command history
-    if(ev.key==="ArrowUp"){if(CMDIX>0){CMDIX--;inp.value=CMDHIST[CMDIX]||"";ev.preventDefault();}}
-    else if(ev.key==="ArrowDown"){if(CMDIX<CMDHIST.length-1){CMDIX++;inp.value=CMDHIST[CMDIX]||"";}else{CMDIX=CMDHIST.length;inp.value="";}}
-  };
-  if(clr)clr.onclick=()=>{TERMLOG=[];saveTerm();redrawTerm();};
-  inp&&inp.focus();
+  const el=$("xterm");if(!el)return;
+  if(typeof Terminal==="undefined"){el.innerHTML='<div style="padding:18px;color:var(--on3);font-size:13px">Terminal assets failed to load.</div>';return;}
+  teardownTerminal();
+  TERM=new Terminal({fontSize:13,fontFamily:'ui-monospace,SFMono-Regular,Menlo,Consolas,monospace',cursorBlink:true,scrollback:3000,
+    theme:{background:'#0a0f22',foreground:'#eaf0ff',cursor:'#57C3FF',selectionBackground:'rgba(108,114,255,.35)'}});
+  try{TFIT=new FitAddon.FitAddon();TERM.loadAddon(TFIT);}catch(e){TFIT=null;}
+  TERM.open(el);_fitTerm();
+  const enc=new TextEncoder();
+  let ws;try{ws=new WebSocket((location.protocol==="https:"?"wss:":"ws:")+"//"+location.host+"/ws/term");}
+  catch(e){TERM.write("\r\n[cannot open websocket]\r\n");return;}
+  ws.binaryType="arraybuffer";TWS=ws;
+  function sendResize(){if(ws.readyState===1){_fitTerm();ws.send(JSON.stringify({cols:TERM.cols,rows:TERM.rows}));}}
+  _termResize=sendResize;window.addEventListener("resize",sendResize);
+  ws.onopen=()=>{sendResize();TERM.focus();};
+  ws.onmessage=ev=>{if(typeof ev.data==="string")TERM.write(ev.data);else TERM.write(new Uint8Array(ev.data));};
+  ws.onclose=()=>{try{TERM&&TERM.write("\r\n\x1b[2m[session ended — reopen the tab to reconnect]\x1b[0m\r\n");}catch(e){}};
+  TERM.onData(d=>{if(ws.readyState===1)ws.send(enc.encode(d));});  // keystrokes → pty (binary)
+  setTimeout(sendResize,80);
 }
 function renderHermesSub(){
   const s=S().hermes,d=s.data||{},ag=A();

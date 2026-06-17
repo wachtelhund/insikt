@@ -96,14 +96,17 @@ server:
     enabled: true
     cmd: ["hermes", "-z"]   # your message is appended as one argument (no shell)
     timeout: 180
-  terminal:    # a shell on the OVERVIEW tab — arbitrary command execution
+  terminal:    # a real terminal on the OVERVIEW tab (xterm.js + a PTY shell)
     enabled: true
-    timeout: 60
+    # shell: /bin/bash   # optional; defaults to $SHELL or bash
 ```
 
-These are the only non-`GET` routes (`/api/chat`, `/api/exec`). The **terminal is
-real remote shell access** to the host for anyone who can open the dashboard —
-keep it off unless your overlay is trusted.
+The terminal is a genuine interactive shell (keyboard shortcuts, ANSI colors,
+full-screen apps like `htop`/`vim`) — a PTY served over a WebSocket (`/ws/term`),
+rendered with a vendored, offline copy of xterm.js. Chat (`/api/chat`) and the
+one-shot `/api/exec` are the other non-`GET` routes. **The terminal is real remote
+shell access** to the host for anyone who can open the dashboard — keep it off
+unless your overlay is trusted.
 
 ### History
 

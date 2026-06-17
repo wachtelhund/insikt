@@ -150,6 +150,14 @@ def _make_handler(cache: StateCache):
 
         def do_GET(self):
             path = self.path.split("?", 1)[0]
+            term = (cache.profile.get("server") or {}).get("terminal") or {}
+            if path == "/ws/term" and term.get("enabled"):
+                from . import webterm
+                if webterm.is_ws(self):
+                    return webterm.serve_terminal(self, term)
+                return self._send(426, json.dumps({"error": "expected_websocket"}), "application/json")
+            if path.startswith("/assets/"):
+                return self._serve_asset(path)
             if path in ("/", "/index.html"):
                 self._send(200, render_dashboard(cache.state(), live=True), "text/html; charset=utf-8")
             elif path == "/api/state":
@@ -166,6 +174,26 @@ def _make_handler(cache: StateCache):
                 self._sse()
             else:
                 self._send(404, json.dumps({"error": "not_found"}), "application/json")
+
+        _ASSETS = {"xterm.js": "application/javascript", "xterm.css": "text/css",
+                   "addon-fit.js": "application/javascript"}
+
+        def _serve_asset(self, path):
+            name = path.rsplit("/", 1)[-1]
+            ctype = self._ASSETS.get(name)
+            f = Path(__file__).resolve().parent / "report" / "assets" / name
+            if not ctype or not f.is_file():
+                return self._send(404, json.dumps({"error": "not_found"}), "application/json")
+            try:
+                data = f.read_bytes()
+            except OSError:
+                return self._send(404, json.dumps({"error": "not_found"}), "application/json")
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "max-age=86400")
+            self.end_headers()
+            self.wfile.write(data)
 
         def _reject(self):
             self._send(405, json.dumps({"error": "read_only", "message": "Insikt is read-only"}), "application/json")

@@ -290,3 +290,33 @@ def test_exec_runs_command_and_persists_cwd():
 def test_meta_terminal_reflects_toggle():
     assert _term_cache().state()["meta"]["terminal"] is True
     assert _make_cache().state()["meta"]["terminal"] is False
+
+
+def test_xterm_asset_is_served():
+    with _Server(_make_cache()) as srv:
+        status, ctype, raw = _get(srv, "/assets/xterm.js")
+        assert status == 200 and "javascript" in ctype
+        assert b"Terminal" in raw and len(raw) > 10000
+        # unknown assets are 404, not a path-traversal escape
+        try:
+            urllib.request.urlopen(srv.url("/assets/secret.py"), timeout=5)
+            raise AssertionError("expected 404")
+        except urllib.error.HTTPError as e:
+            assert e.code == 404
+
+
+def test_ws_term_gated_and_needs_upgrade():
+    # disabled -> the path falls through to 404
+    with _Server(_make_cache()) as srv:
+        try:
+            urllib.request.urlopen(srv.url("/ws/term"), timeout=5)
+            raise AssertionError("expected 404")
+        except urllib.error.HTTPError as e:
+            assert e.code == 404
+    # enabled but a plain GET (no Upgrade header) -> 426 Upgrade Required
+    with _Server(_term_cache()) as srv:
+        try:
+            urllib.request.urlopen(srv.url("/ws/term"), timeout=5)
+            raise AssertionError("expected 426")
+        except urllib.error.HTTPError as e:
+            assert e.code == 426
